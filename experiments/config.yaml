@@ -1,0 +1,8 @@
+lr: 0.001
+epoch: 100
+bs: 32
+lr_milestone: [10,20,40,80]
+num_workers: 4
+show_interval: 1
+snapshot_interval: 1
+test_interval: 10
