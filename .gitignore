@@ -1,2 +1,5 @@
 .idea
-
+*.png
+data
+logs
+__pycache__

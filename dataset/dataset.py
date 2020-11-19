@@ -4,12 +4,11 @@ from torchvision import datasets as tv_datasets
 from torchvision import transforms
 
 
-def build_data(tag, batch_size):
+def build_data(tag, batch_size, training, num_worker):
     if tag == "mnist":
         transform = transforms.Compose([
             transforms.ToTensor(),
-            transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))
         ])
-        mnist = tv_datasets.MNIST(root="../data/", train=True, transform=transform)
-        dataloader = DataLoader(mnist, batch_size, shuffle=True)
+        mnist = tv_datasets.MNIST(root="../data/", train=training, transform=transform, download=True)
+        dataloader = DataLoader(mnist, batch_size, shuffle=True, num_workers=num_worker)
     return dataloader
