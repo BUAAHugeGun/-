@@ -1,0 +1,19 @@
+data_path: ../data
+data_tag: cifar10
+lr: 0.0005
+epoch: 100
+load_epoch: -1
+bs: 16
+n_levels: 3
+n_flows: 6
+n_channels: 64
+temp: 01
+n_sample: 20
+img_size: 64
+coupling_type: densenet
+densenet_depth: 6
+lr_milestone: [ 10,20,40,80 ]
+num_workers: 2
+show_interval: 10
+snapshot_interval: 1
+test_interval: 1
