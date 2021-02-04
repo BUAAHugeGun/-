@@ -135,6 +135,14 @@ def train(args, root):
             torch.save(flow_model.state_dict(), os.path.join(root, "logs/flow_model_epoch-{}.pth".format(epoch)))
             torch.save(flow_opt.state_dict(), os.path.join(root, "logs/flow_opt_epoch-{}.pth".format(epoch)))
             torch.save(flow_sch.state_dict(), os.path.join(root, "logs/flow_sch_epoch-{}.pth".format(epoch)))
+        if epoch % args['test_interval']:
+            with torch.no_grad():
+                save_image(
+                    flow_model.reverse(z_sample).cpu().data + 0.5,
+                    f"sample/{str(epoch + 1).zfill(3)}.png",
+                    normalize=True,
+                    nrow=10,
+                )
 
 
 """
