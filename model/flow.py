@@ -378,4 +378,5 @@ if __name__ == "__main__":
         print(zz.shape)
     y = flow.reverse(z)
     print(y.shape)
+    print(y)
     print((y - x).abs().mean())

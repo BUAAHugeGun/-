@@ -66,12 +66,107 @@ class MNIST_G(nn.Module):
         """
 
 
-def get_G(tag):
+def _conv_layer(in_channels, out_channels, kernel, stride, padding, bias=True, norm=True, act="relu"):
+    layers = [
+        nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=kernel, stride=stride,
+                  padding=padding, bias=bias)
+    ]
+    if norm:
+        layers.append(nn.BatchNorm2d(out_channels))
+    if act == "relu":
+        layers.append(nn.ReLU())
+    elif act == "tanh":
+        layers.append(nn.Tanh())
+    elif act == "sigmoid":
+        layers.append(nn.Sigmoid())
+    else:
+        assert 0
+    return nn.Sequential(*layers)
+
+
+def _deconv_layer(in_channels, out_channels, kernel, stride, padding, bias=True, norm=True):
+    layers = [
+        nn.UpsamplingBilinear2d(scale_factor=2),
+        nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=kernel, stride=stride,
+                  padding=padding, bias=bias),
+    ]
+    if norm:
+        layers.append(nn.BatchNorm2d(out_channels))
+    layers.append(nn.ReLU())
+    return nn.Sequential(*layers)
+
+
+def _pool_layer(kernel, stride, padding, mode="max"):
+    if mode == "max":
+        return nn.MaxPool2d(kernel_size=kernel, stride=stride, padding=padding)
+    elif mode == "avg":
+        return nn.AvgPool2d(kernel_size=kernel, stride=stride, padding=padding)
+    else:
+        print("wrong pool layer mode: {}".format(mode))
+        assert 0
+
+
+class UNET(nn.Module):
+    def __init__(self, in_channels, out_channels, scale=5):
+        super(UNET, self).__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.scale = scale
+        self.build()
+
+    def get_block(self, in_channels, out_channels, pool=True, up=False):
+        layers = []
+        if pool:
+            layers.append(_pool_layer(2, 2, 0, "max"))
+        layers.append(_conv_layer(in_channels, out_channels, 3, 1, 1))
+        layers.append(_conv_layer(out_channels, out_channels, 3, 1, 1))
+        if up:
+            layers.append(_deconv_layer(out_channels, out_channels // 2, 3, 1, 1))
+        return nn.Sequential(*layers)
+
+    def build(self):
+        self.G = []
+        self.D = []
+        self.pre_conv = _conv_layer(self.in_channels, 16, 3, 1, 1)
+        for i in range(self.scale):
+            in_channels = 16 * (2 ** i)
+            self.G.append(self.get_block(in_channels, in_channels * 2, True, i == (self.scale - 1)))
+        for i in range(self.scale):
+            in_channels = 16 * (2 ** (self.scale - i))
+            out_channels = in_channels // 2
+            self.D.append(self.get_block(in_channels, out_channels, False, i < (self.scale - 1)))
+        self.post_conv = _conv_layer(16, self.out_channels, 3, 1, 1, act="tanh")
+        self.g_list = nn.Sequential(*self.G)
+        self.d_list = nn.Sequential(*self.D)
+
+    def forward(self, x):
+        out = []
+        out.append(self.pre_conv(x))
+        for i in range(self.scale):
+            out.append(self.G[i](out[i]))
+        for i in range(self.scale):
+            j = self.scale - i - 1
+            input = torch.cat([out[j + 1], out[j]], 1)
+            out[j] = self.D[i](input)
+        return self.post_conv(out[0])
+
+
+def get_G(tag, **kwargs):
     if tag == "mnist":
         return MNIST_G()
+    if tag == "unet":
+        in_channels = kwargs.get("in_channels", None)
+        out_channels = kwargs.get("out_channels", None)
+        scale = kwargs.get("scale", 5)
+        if in_channels is not None and out_channels is not None:
+            return UNET(in_channels, out_channels, scale)
+        else:
+            print("unet need parameter: in_channels or outchannels")
+            assert 0
 
 
 if __name__ == "__main__":
-    a = torch.randn([4, 1, 28, 28])
-    G = get_G("mnist")
+    a = torch.randn([4, 2, 64, 64])
+    G = get_G("unet", in_channels=2, out_channels=1, scale=5)
+    torch.save(G.state_dict(), "test.pth")
     print(G(a).shape)

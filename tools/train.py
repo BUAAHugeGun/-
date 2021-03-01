@@ -2,6 +2,8 @@ from dataset.data_builder import build_data
 from torchvision.utils import save_image
 from tensorboardX import SummaryWriter
 import torch.nn as nn
+from nets.generator import get_G
+from nets.discriminator import get_D
 from tqdm import tqdm
 from model.flow import GLOW
 import math
@@ -29,22 +31,16 @@ def open_config(root):
 
 def load(models, epoch, root):
     def _detect_latest():
-        """
-        detect the latest file in log_dir with format <prefix><epoch><suffix>
-        :param prefix:
-        :param suffix:
-        :return: epoch, if here's no checkpoints, return a negative value
-        """
         checkpoints = os.listdir(os.path.join(root, "logs"))
-        checkpoints = [f for f in checkpoints if f.startswith("flow_model_epoch-") and f.endswith(".pth")]
-        checkpoints = [int(f[len("flow_model_epoch-"):-len(".pth")]) for f in checkpoints]
+        checkpoints = [f for f in checkpoints if f.startswith("G_epoch-") and f.endswith(".pth")]
+        checkpoints = [int(f[len("G_epoch-"):-len(".pth")]) for f in checkpoints]
         checkpoints = sorted(checkpoints)
         _epoch = checkpoints[-1] if len(checkpoints) > 0 else None
         return _epoch
 
     if epoch == -1:
         epoch = _detect_latest()
-    if epoch == None:
+    if epoch is None:
         return -1
     for name, model in models.items():
         ckpt = torch.load(os.path.join(root, "logs/" + name + "_epoch-{}.pth".format(epoch)))
@@ -85,6 +81,7 @@ def calc_loss(log_p, logdet, image_size, n_bits):
 
 
 def train(args, root):
+    image_size = 64
     global log_file
     if not os.path.exists(os.path.join(root, "logs")):
         os.mkdir(os.path.join(root, "logs"))
@@ -96,68 +93,114 @@ def train(args, root):
     to_log(args)
     writer = SummaryWriter(os.path.join(root, "logs/result/event/"))
 
-    dataloader = build_data(args['data_tag'], args['data_path'], args["bs"], True, num_worker=args["num_workers"])
+    dataloader = build_data(args['data_tag'], args['data_path'], args["bs"], True, num_worker=args["num_workers"],
+                            data_sum=args.get('data_sum', None))
 
-    z_sample = []
-    z_shapes = calc_z_shapes(3, args['img_size'], args['n_levels'])
-    for z in z_shapes:
-        z_new = torch.randn(args['n_sample'], *z) * args['temp']
-        z_sample.append(z_new.cuda())
+    G = get_G("unet", in_channels=2, out_channels=3, scale=5).cuda()
+    D = get_D("mnist", classes=11).cuda()
 
-    flow_model = GLOW(3, args['n_flows'], args['n_levels']).cuda()
-    flow_opt = torch.optim.Adam(flow_model.parameters(), lr=args['lr'])
-    flow_sch = torch.optim.lr_scheduler.MultiStepLR(flow_opt, args["lr_milestone"], gamma=0.5)
+    g_opt = torch.optim.Adam(G.parameters(), lr=args["lr"])
+    d_opt = torch.optim.Adam(D.parameters(), lr=args["lr"])
+    g_sch = torch.optim.lr_scheduler.MultiStepLR(g_opt, args["lr_milestone"], gamma=0.5)
+    d_sch = torch.optim.lr_scheduler.MultiStepLR(d_opt, args["lr_milestone"], gamma=0.5)
 
-    load_epoch = load({"flow_model": flow_model, "flow_opt": flow_opt, "flow_sch": flow_sch}, args["load_epoch"], root)
-
+    load_epoch = load({"G": G, "D": D, "g_opt": g_opt, "d_opt": d_opt, "g_sch": g_sch, "d_sch": d_sch},
+                      args["load_epoch"], root)
     tot_iter = (load_epoch + 1) * len(dataloader)
-    for epoch in range(args['load_epoch'] + 1, args['epoch']):
-        flow_opt.step()
-        for i, (image, label) in enumerate(tqdm(dataloader)):
+
+    loss_function = nn.CrossEntropyLoss()
+    validity_loss = nn.BCELoss()
+
+    real_label = torch.ones([1]).cuda()
+    fake_label = torch.zeros([1]).cuda()
+
+    g_opt.step()
+    d_opt.step()
+    for epoch in range(load_epoch + 1, args['epoch']):
+        g_sch.step()
+        d_sch.step()
+        for i, (image, label) in enumerate(dataloader):
             tot_iter += 1
-            image, label = image.cuda(), label.cuda()
-            image -= 0.5
-            log_p, ldj, _ = flow_model(image + torch.rand_like(image) / 255.)  # 256?
+            image, label = image.cuda(), label.long().cuda()
 
-            ldj = ldj.mean()
-            loss, log_p, ldj = calc_loss(log_p, ldj, args['img_size'], 8)
-            flow_model.zero_grad()
-            loss.backward()
+            real_class_label = label
+            fake_class_label = torch.tensor([10]).expand(image.shape[0]).cuda().long()
 
-            flow_opt.step()
+            d_opt.zero_grad()
+            # D_real
+            validity_label = real_label.expand(image.shape[0])
+            pvalidity, plabels = D(image)
+            D_loss_real_val = validity_loss(pvalidity, validity_label)
+            D_loss_real_label = nn.NLLLoss()(plabels, real_class_label)
+
+            D_loss_real = D_loss_real_val + D_loss_real_label
+            D_loss_real.backward()
+            D_r = pvalidity.mean()
+
+            # D_fake
+            input = torch.randn([image.shape[0], 2, image_size, image_size]).cuda()
+            input[:, 1, :, :] = label.reshape(image.shape[0], 1, 1).expand(image.shape[0], image_size, image_size)
+            G_out = G(input)
+            validity_label = fake_label.expand(image.shape[0])
+            pvalidity, plabels = D(G_out.detach())
+            D_loss_fake_val = validity_loss(pvalidity, validity_label)
+            D_loss_fake_label = nn.NLLLoss()(plabels, fake_class_label)
+
+            D_loss_fake = D_loss_fake_val + D_loss_fake_label
+            D_loss_fake.backward()
+            D_f = pvalidity.mean()
+
+            D_loss = D_loss_real + D_loss_fake
+            d_opt.step()
+
+            g_opt.zero_grad()
+            # G
+            input = torch.randn([image.shape[0], 2, image_size, image_size]).cuda()
+            input[:, 1, :, :] = label.reshape(image.shape[0], 1, 1).expand(image.shape[0], image_size, image_size)
+            validity_label = real_label.expand(image.shape[0])
+            G_out = G(input)
+            pvalidity, plabels = D(G_out)
+            G_loss_val = validity_loss(pvalidity, validity_label)
+            G_loss_label = nn.NLLLoss()(plabels, real_class_label)
+
+            G_loss = G_loss_val + G_loss_label
+            G_loss.backward()
+
+            DG_r = pvalidity.mean()
+            g_opt.step()
 
             if tot_iter % args['show_interval'] == 0:
-                to_log('epoch: {}, batch: {}, tot_batch: {}, loss_total: {:.5f}, lr: {:.5f}'.format(
-                    epoch, i, len(dataloader), loss.item(), flow_sch.get_last_lr()[0]), output=False)
-                writer.add_scalar("loss_total", loss.item(), tot_iter)
+                to_log(
+                    'epoch: {}, batch: {}, D_loss: {:.5f}, D_loss_real: {:.5f}, D_loss_fake: {:.5f}, D_loss_real_val: {:.5f}, D_loss_real_label: {:.5f}, D_loss_fake_val: {:.5f}, D_loss_fake_label: {:.5f}, G_loss: {:5f}, G_loss_val: {:.5f}, G_loss_label: {:5f}, lr: {:.5f}'.format(
+                        epoch, i, D_loss.item(), D_loss_real.item(), D_loss_fake.item(), D_loss_real_val.item(),
+                        D_loss_real_label.item(), D_loss_fake_val.item(), D_loss_fake_label.item(), G_loss.item(),
+                        G_loss_val.item(), G_loss_label.item(), g_sch.get_last_lr()[0]))
+                writer.add_scalar("D_loss", D_loss.item(), tot_iter)
+                writer.add_scalar("D_loss_real", D_loss_real.item(), tot_iter)
+                writer.add_scalar("D_loss_fake", D_loss_fake.item(), tot_iter)
+                writer.add_scalar("D_loss_real_val", D_loss_real_val.item(), tot_iter)
+                writer.add_scalar("D_loss_real_label", D_loss_real_label.item(), tot_iter)
+                writer.add_scalar("D_loss_fake_val", D_loss_fake_val.item(), tot_iter)
+                writer.add_scalar("D_loss_fake_label", D_loss_fake_label.item(), tot_iter)
+                writer.add_scalar("G_loss", G_loss.item(), tot_iter)
+                writer.add_scalar("G_loss_val", G_loss_val.item(), tot_iter)
+                writer.add_scalar("G_loss_label", G_loss_label.item(), tot_iter)
+                writer.add_scalar("lr", g_sch.get_last_lr()[0], tot_iter)
 
-        if epoch % args['snapshot_interval'] == 0:
-            torch.save(flow_model.state_dict(), os.path.join(root, "logs/flow_model_epoch-{}.pth".format(epoch)))
-            torch.save(flow_opt.state_dict(), os.path.join(root, "logs/flow_opt_epoch-{}.pth".format(epoch)))
-            torch.save(flow_sch.state_dict(), os.path.join(root, "logs/flow_sch_epoch-{}.pth".format(epoch)))
-        if epoch % args['test_interval']:
-            with torch.no_grad():
-                save_image(
-                    flow_model.reverse(z_sample).cpu().data + 0.5,
-                    f"sample/{str(epoch + 1).zfill(3)}.png",
-                    normalize=True,
-                    nrow=10,
-                )
-
-
-"""
-        if epoch % args["test_interval"] == 0:
+        if epoch % args["snapshot_interval"] == 0:
+            torch.save(G.state_dict(), os.path.join(root, "logs/G_epoch-{}.pth".format(epoch)))
+            torch.save(D.state_dict(), os.path.join(root, "logs/D_epoch-{}.pth".format(epoch)))
+            torch.save(g_opt.state_dict(), os.path.join(root, "logs/g_opt_epoch-{}.pth".format(epoch)))
+            torch.save(d_opt.state_dict(), os.path.join(root, "logs/d_opt_epoch-{}.pth".format(epoch)))
+            torch.save(g_sch.state_dict(), os.path.join(root, "logs/g_sch_epoch-{}.pth".format(epoch)))
+            torch.save(d_sch.state_dict(), os.path.join(root, "logs/d_sch_epoch-{}.pth".format(epoch)))
+        if epoch % args['test_interval'] == 0:
             label = torch.tensor([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]).cuda()
-            input = torch.randn([10, 2, 28, 28]).cuda()
-            input[:, 1, :, :] = label.reshape(10, 1, 1).expand(10, 28, 28)
+            input = torch.randn([10, 2, image_size, image_size]).cuda()
+            input[:, 1, :, :] = label.reshape(10, 1, 1).expand(10, image_size, image_size)
             G_out = G(input)
-            save_image(G_out, os.path.join(root, "logs/result/output-{}.png".format(epoch)))
-            # save_image(data.cpu(), os.path.join(root, "logs/result/gt-{}.png".format(epoch)))
-"""
-
-
-def test(args):
-    print("testing\n", args)
+            G_out = G_out / 2 + 0.5
+            save_image(G_out, os.path.join(root, "logs/output-{}.png".format(epoch)))
 
 
 if __name__ == "__main__":
@@ -165,7 +208,4 @@ if __name__ == "__main__":
     parser.add_argument("--root", type=str)
     parser.add_argument("--test", default=False, action='store_true')
     args = parser.parse_args()
-    if args.test == True:
-        test(open_config(args.root), args.root)
-    else:
-        train(open_config(args.root), args.root)
+    train(open_config(args.root), args.root)
