@@ -6,6 +6,7 @@ from torchvision import transforms
 import os
 import numpy as np
 import dataset.cifar10 as cifar10
+import random
 
 
 class cifar10_dataset(Dataset):
@@ -25,7 +26,7 @@ class cifar10_dataset(Dataset):
             self.set[0] = self.set[0][0:data_sum]
             self.set[1] = self.set[1][0:data_sum]
         self.transform = transforms.Compose(
-            [transforms.Resize(64),
+            [transforms.Resize(32),
              transforms.ToTensor(),
              transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
              ])
@@ -35,6 +36,50 @@ class cifar10_dataset(Dataset):
 
     def __getitem__(self, id):
         return [self.transform(Image.fromarray(self.set[0][id].astype(np.uint8))), self.set[1][id]]
+
+
+class facades_dataset(Dataset):
+    def __init__(self, path, train=True):
+        super(facades_dataset, self).__init__()
+        if train:
+            path = os.path.join(path, "train")
+        else:
+            path = os.path.join(path, "test")
+        self.a_path = os.path.join(path, "a")
+        self.b_path = os.path.join(path, "b")
+        self.image_filenames = [x for x in os.listdir(self.a_path)]
+
+        self.transform = transforms.Compose(
+            [  # transforms.Resize(32),
+                transforms.ToTensor(),
+                transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+            ])
+
+    def __len__(self):
+        return len(self.image_filenames)
+
+    def __getitem__(self, id):
+        a = Image.open(os.path.join(self.a_path, self.image_filenames[id])).convert('RGB')
+        b = Image.open(os.path.join(self.b_path, self.image_filenames[id])).convert('RGB')
+        a = a.resize((286, 286), Image.BICUBIC)
+        b = b.resize((286, 286), Image.BICUBIC)
+        a = transforms.ToTensor()(a)
+        b = transforms.ToTensor()(b)
+        w_offset = random.randint(0, max(0, 286 - 256 - 1))
+        h_offset = random.randint(0, max(0, 286 - 256 - 1))
+
+        a = a[:, h_offset:h_offset + 256, w_offset:w_offset + 256]
+        b = b[:, h_offset:h_offset + 256, w_offset:w_offset + 256]
+
+        a = transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))(a)
+        b = transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))(b)
+
+        if random.random() < 0.5:
+            idx = [i for i in range(a.size(2) - 1, -1, -1)]  # flip
+            idx = torch.LongTensor(idx)
+            a = a.index_select(2, idx)
+            b = b.index_select(2, idx)
+        return a, b
 
 
 def build_data(tag, path, batch_size, training, num_worker, **kwargs):
@@ -48,10 +93,14 @@ def build_data(tag, path, batch_size, training, num_worker, **kwargs):
     elif tag == "cifar10":
         return DataLoader(cifar10_dataset(os.path.join(path, "cifar10"), **kwargs), batch_size, shuffle=True,
                           num_workers=num_worker)
+    elif tag == "facades":
+        return DataLoader(facades_dataset(os.path.join(path, "facades")), batch_size, shuffle=True,
+                          num_workers=num_worker)
 
 
 if __name__ == "__main__":
-    data = build_data("cifar10", os.path.join(os.path.dirname(os.path.abspath(__file__)), "../data"), 8, True, 0)
+    # data = build_data("cifar10", os.path.join(os.path.dirname(os.path.abspath(__file__)), "../data"), 8, True, 0)
+    data = build_data("facades", os.path.join(os.path.dirname(os.path.abspath(__file__)), "../data"), 8, True, 0)
     for i, data in enumerate(data):
         print(i, data[0].shape, data[1].shape)
         exit(0)

@@ -35,7 +35,7 @@ class MNIST_D(nn.Module):
             nn.AvgPool2d(2, stride=2)  # batch, 64, 7, 7
         )
         self.fc = nn.Sequential(
-            nn.Linear(32 * 16 * 16, 1000),
+            nn.Linear(32 * 8 * 8, 1000),
             nn.LeakyReLU(0.2, True)
         )
         self.validity_layer = nn.Sequential(nn.Linear(1000, 1), nn.Sigmoid())

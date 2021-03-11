@@ -81,7 +81,7 @@ def calc_loss(log_p, logdet, image_size, n_bits):
 
 
 def train(args, root):
-    image_size = 64
+    image_size = 256
     global log_file
     if not os.path.exists(os.path.join(root, "logs")):
         os.mkdir(os.path.join(root, "logs"))
@@ -93,11 +93,10 @@ def train(args, root):
     to_log(args)
     writer = SummaryWriter(os.path.join(root, "logs/result/event/"))
 
-    dataloader = build_data(args['data_tag'], args['data_path'], args["bs"], True, num_worker=args["num_workers"],
-                            data_sum=args.get('data_sum', None))
+    dataloader = build_data(args['data_tag'], args['data_path'], args["bs"], True, num_worker=args["num_workers"])
 
-    G = get_G("unet", in_channels=2, out_channels=3, scale=5).cuda()
-    D = get_D("mnist", classes=11).cuda()
+    G = get_G("unet", in_channels=3, out_channels=3, scale=5).cuda()
+    D = get_D("resnet", classes=2).cuda()
 
     g_opt = torch.optim.Adam(G.parameters(), lr=args["lr"])
     d_opt = torch.optim.Adam(D.parameters(), lr=args["lr"])
@@ -108,8 +107,7 @@ def train(args, root):
                       args["load_epoch"], root)
     tot_iter = (load_epoch + 1) * len(dataloader)
 
-    loss_function = nn.CrossEntropyLoss()
-    validity_loss = nn.BCELoss()
+    validity_loss = nn.BCELoss().cuda()
 
     real_label = torch.ones([1]).cuda()
     fake_label = torch.zeros([1]).cuda()
@@ -119,72 +117,60 @@ def train(args, root):
     for epoch in range(load_epoch + 1, args['epoch']):
         g_sch.step()
         d_sch.step()
-        for i, (image, label) in enumerate(dataloader):
+        for i, (image, mask) in enumerate(dataloader):
             tot_iter += 1
-            image, label = image.cuda(), label.long().cuda()
-
-            real_class_label = label
-            fake_class_label = torch.tensor([10]).expand(image.shape[0]).cuda().long()
+            image, mask = image.cuda(), mask.cuda()
 
             d_opt.zero_grad()
             # D_real
             validity_label = real_label.expand(image.shape[0])
             pvalidity, plabels = D(image)
             D_loss_real_val = validity_loss(pvalidity, validity_label)
-            D_loss_real_label = nn.NLLLoss()(plabels, real_class_label)
 
-            D_loss_real = D_loss_real_val + D_loss_real_label
+            D_loss_real = D_loss_real_val
             D_loss_real.backward()
-            D_r = pvalidity.mean()
+            # D_r = pvalidity.mean()
 
             # D_fake
-            input = torch.randn([image.shape[0], 2, image_size, image_size]).cuda()
-            input[:, 1, :, :] = label.reshape(image.shape[0], 1, 1).expand(image.shape[0], image_size, image_size)
-            G_out = G(input)
+            G_out = G(mask)
             validity_label = fake_label.expand(image.shape[0])
             pvalidity, plabels = D(G_out.detach())
             D_loss_fake_val = validity_loss(pvalidity, validity_label)
-            D_loss_fake_label = nn.NLLLoss()(plabels, fake_class_label)
 
-            D_loss_fake = D_loss_fake_val + D_loss_fake_label
+            D_loss_fake = D_loss_fake_val
             D_loss_fake.backward()
-            D_f = pvalidity.mean()
+            # D_f = pvalidity.mean()
 
             D_loss = D_loss_real + D_loss_fake
             d_opt.step()
 
             g_opt.zero_grad()
             # G
-            input = torch.randn([image.shape[0], 2, image_size, image_size]).cuda()
-            input[:, 1, :, :] = label.reshape(image.shape[0], 1, 1).expand(image.shape[0], image_size, image_size)
+            # input = torch.randn([image.shape[0], 2, image_size, image_size]).cuda()
+            # input[:, 1, :, :] = label.reshape(image.shape[0], 1, 1).expand(image.shape[0], image_size, image_size)
             validity_label = real_label.expand(image.shape[0])
-            G_out = G(input)
+            G_out = G(mask)
             pvalidity, plabels = D(G_out)
             G_loss_val = validity_loss(pvalidity, validity_label)
-            G_loss_label = nn.NLLLoss()(plabels, real_class_label)
 
-            G_loss = G_loss_val + G_loss_label
+            G_loss = G_loss_val
             G_loss.backward()
 
-            DG_r = pvalidity.mean()
+            # DG_r = pvalidity.mean()
             g_opt.step()
 
             if tot_iter % args['show_interval'] == 0:
                 to_log(
-                    'epoch: {}, batch: {}, D_loss: {:.5f}, D_loss_real: {:.5f}, D_loss_fake: {:.5f}, D_loss_real_val: {:.5f}, D_loss_real_label: {:.5f}, D_loss_fake_val: {:.5f}, D_loss_fake_label: {:.5f}, G_loss: {:5f}, G_loss_val: {:.5f}, G_loss_label: {:5f}, lr: {:.5f}'.format(
+                    'epoch: {}, batch: {}, D_loss: {:.5f}, D_loss_real: {:.5f}, D_loss_fake: {:.5f}, D_loss_real_val: {:.5f}, D_loss_fake_val: {:.5f}, G_loss: {:5f}, G_loss_val: {:.5f}, lr: {:.5f}'.format(
                         epoch, i, D_loss.item(), D_loss_real.item(), D_loss_fake.item(), D_loss_real_val.item(),
-                        D_loss_real_label.item(), D_loss_fake_val.item(), D_loss_fake_label.item(), G_loss.item(),
-                        G_loss_val.item(), G_loss_label.item(), g_sch.get_last_lr()[0]))
-                writer.add_scalar("D_loss", D_loss.item(), tot_iter)
-                writer.add_scalar("D_loss_real", D_loss_real.item(), tot_iter)
-                writer.add_scalar("D_loss_fake", D_loss_fake.item(), tot_iter)
-                writer.add_scalar("D_loss_real_val", D_loss_real_val.item(), tot_iter)
-                writer.add_scalar("D_loss_real_label", D_loss_real_label.item(), tot_iter)
-                writer.add_scalar("D_loss_fake_val", D_loss_fake_val.item(), tot_iter)
-                writer.add_scalar("D_loss_fake_label", D_loss_fake_label.item(), tot_iter)
-                writer.add_scalar("G_loss", G_loss.item(), tot_iter)
-                writer.add_scalar("G_loss_val", G_loss_val.item(), tot_iter)
-                writer.add_scalar("G_loss_label", G_loss_label.item(), tot_iter)
+                        D_loss_fake_val.item(), G_loss.item(),G_loss_val.item(), g_sch.get_last_lr()[0]))
+                writer.add_scalar("loss/D_loss", D_loss.item(), tot_iter)
+                writer.add_scalar("loss/D_loss_real", D_loss_real.item(), tot_iter)
+                writer.add_scalar("loss/D_loss_fake", D_loss_fake.item(), tot_iter)
+                writer.add_scalar("loss/D_loss_real_val", D_loss_real_val.item(), tot_iter)
+                writer.add_scalar("loss/D_loss_fake_val", D_loss_fake_val.item(), tot_iter)
+                writer.add_scalar("loss/G_loss", G_loss.item(), tot_iter)
+                writer.add_scalar("loss/G_loss_val", G_loss_val.item(), tot_iter)
                 writer.add_scalar("lr", g_sch.get_last_lr()[0], tot_iter)
 
         if epoch % args["snapshot_interval"] == 0:
@@ -195,10 +181,9 @@ def train(args, root):
             torch.save(g_sch.state_dict(), os.path.join(root, "logs/g_sch_epoch-{}.pth".format(epoch)))
             torch.save(d_sch.state_dict(), os.path.join(root, "logs/d_sch_epoch-{}.pth".format(epoch)))
         if epoch % args['test_interval'] == 0:
-            label = torch.tensor([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]).cuda()
-            input = torch.randn([10, 2, image_size, image_size]).cuda()
-            input[:, 1, :, :] = label.reshape(10, 1, 1).expand(10, image_size, image_size)
-            G_out = G(input)
+            # label = torch.tensor([5]).expand([64]).cuda()
+            # input_test[:, 1, :, :] = label.reshape(64, 1, 1).expand(64, image_size, image_size)
+            # G_out = G(input_test)
             G_out = G_out / 2 + 0.5
             save_image(G_out, os.path.join(root, "logs/output-{}.png".format(epoch)))
 

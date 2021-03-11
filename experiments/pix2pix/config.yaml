@@ -1,0 +1,11 @@
+data_path: ../data
+data_tag: facades
+lr: 0.0002
+epoch: 1000
+load_epoch: -1
+bs: 8
+lr_milestone: [ 100, 500, 1000 ]
+num_workers: 3
+show_interval: 5
+snapshot_interval: 5
+test_interval: 5
