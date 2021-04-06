@@ -8,8 +8,9 @@ from torch import autograd
 from tqdm import tqdm
 from model.flow import GLOW
 import math
+import cv2
 import torch
-
+import numpy as np
 import yaml
 import os
 import argparse
@@ -72,6 +73,22 @@ def calc_gradient_penalty(netD, real_data, label, fake_data, batch_size, gp_lamb
 
     gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean() * gp_lambda
     return gradient_penalty
+
+
+# BCHW
+def batch_image_merge(image):
+    image = torch.cat(image.split(4, 0), 3)
+    image = torch.cat(image.split(1, 0), 2)
+    # CH'W'
+    return image
+
+
+def imagetensor2np(x):
+    x = torch.round((x + 1) / 2 * 255).clamp(0, 255).int().abs()
+    x = x.detach().cpu().numpy()
+    x = np.array(x, dtype=np.uint8).squeeze(0)
+    x = np.transpose(x, [1, 2, 0])
+    return x
 
 
 def train(args, root):
@@ -137,7 +154,8 @@ def train(args, root):
                 D_loss.backward()
 
                 # wgan-gp
-                gradient_penalty = calc_gradient_penalty(D, image, mask, G_out.detach(), mask.shape[0], args['gp_lambda'])
+                gradient_penalty = calc_gradient_penalty(D, image, mask, G_out.detach(), mask.shape[0],
+                                                         args['gp_lambda'])
                 gradient_penalty.backward()
 
                 d_opt.step()
@@ -186,9 +204,17 @@ def train(args, root):
             # label = torch.tensor([5]).expand([64]).cuda()
             # input_test[:, 1, :, :] = label.reshape(64, 1, 1).expand(64, image_size, image_size)
             # G_out = G(input_test)
+            image = G_out.clone().detach()
+            image = batch_image_merge(image)
+            image = imagetensor2np(image)
+            mask = batch_image_merge(mask)
+            mask = imagetensor2np(mask)
             G_out = G_out / 2 + 0.5
             G_out = G_out.clamp(0, 1)
             save_image(G_out, os.path.join(root, "logs/output-{}.png".format(epoch)))
+            writer.add_image('image{}/mask'.format(epoch), mask, tot_iter, dataformats='HWC')
+            writer.add_image('image{}/fake'.format(epoch), cv2.cvtColor(image, cv2.COLOR_BGR2RGB), tot_iter,
+                             dataformats='HWC')
 
 
 if __name__ == "__main__":

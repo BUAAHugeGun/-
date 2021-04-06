@@ -182,6 +182,7 @@ def get_G(tag, **kwargs):
 
 
 if __name__ == "__main__":
+    """
     a = torch.randn([4, 2, 64, 64])
     aa = a.clone()
     a.requires_grad = True
@@ -189,3 +190,10 @@ if __name__ == "__main__":
     b = G(a).mean()
     b.backward()
     print((a - aa).abs().sum())
+    """
+    a = torch.tensor([[[[1, 2], [3, 4]]], [[[11, 22], [33, 44]]], [[[1, 3], [2, 4]]], [[[11, 33], [22, 44]]]])
+    print(a)
+    a = torch.cat(a.split(2, 0), 2)
+    a = torch.cat(a.split(1, 0), 3)
+    print(a)
+    print(a.shape)
