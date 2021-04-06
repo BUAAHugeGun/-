@@ -77,8 +77,8 @@ def calc_gradient_penalty(netD, real_data, label, fake_data, batch_size, gp_lamb
 
 # BCHW
 def batch_image_merge(image):
-    image = torch.cat(image.split(4, 0), 3)
-    image = torch.cat(image.split(1, 0), 2)
+    #image = torch.cat(image.split(4, 0), 2)
+    image = torch.cat(image.split(1, 0), 3)
     # CH'W'
     return image
 
