@@ -1,12 +1,12 @@
 data_path: ../data
 data_tag: coco_obj
-lr: 0.0002
-epoch: 200
+lr: 0.0001
+epoch: 100
 load_epoch: -1
-bs: 16
-lr_milestone: [ 40, 80]
+bs: 32
+lr_milestone: [ 40, 80 ]
 num_workers: 3
-show_interval: 10
+show_interval: 5
 snapshot_interval: 1
 test_interval: 1
 gp_lambda: 10

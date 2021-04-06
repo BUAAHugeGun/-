@@ -137,7 +137,7 @@ def train(args, root):
                 D_loss.backward()
 
                 # wgan-gp
-                gradient_penalty = calc_gradient_penalty(D, image, mask, G_out.detach(), args['bs'], args['gp_lambda'])
+                gradient_penalty = calc_gradient_penalty(D, image, mask, G_out.detach(), mask.shape[0], args['gp_lambda'])
                 gradient_penalty.backward()
 
                 d_opt.step()

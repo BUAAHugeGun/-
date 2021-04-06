@@ -1,5 +1,6 @@
 *.pth
 .idea
+experiments
 *.png
 data
 logs
