@@ -1,3 +1,5 @@
+import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "6"
 from dataset.data_builder import build_data
 from torchvision.utils import save_image
 from tensorboardX import SummaryWriter
