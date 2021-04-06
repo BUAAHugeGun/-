@@ -7,6 +7,8 @@ import os
 import numpy as np
 import dataset.cifar10 as cifar10
 import random
+import matplotlib.pyplot as plt
+from pycocotools.coco import COCO
 
 
 class cifar10_dataset(Dataset):
@@ -82,6 +84,53 @@ class facades_dataset(Dataset):
         return a, b
 
 
+class coco_obj_dataset(Dataset):
+
+    def __init__(self, path, train=True, **kwargs):
+        super(coco_obj_dataset, self).__init__()
+        if train:
+            self.path = os.path.join(path, "train_cut")
+            self.label_path = os.path.join(path, "train_label_cut")
+        else:
+            self.path = os.path.join(path, "val_cut")
+            self.label_path = os.path.join(path, "val_label_cut")
+        data_list_path = os.path.join(self.path, "data_list.txt")
+        f = open(data_list_path)
+        classes = kwargs.get('classes', None)
+        if classes is None:
+            classes = [x for x in range(1, 91)]
+        lines = f.readlines()
+        # annotation_dir = os.path.join(path, "annotations", "instances_{}2017.json".format("train" if train else 'val'))
+        # self.coco = COCO(annotation_dir)
+        self.file_name_label_list = []
+        for line in lines:
+            line = line[0:-1]
+            filename, class_num, class_name = line.split(' ', 2)
+            id, obj_id = filename.split('.')[0].split('_')
+            id, obj_id, class_num = int(id), int(obj_id), int(class_num)
+            if class_num in classes:
+                self.file_name_label_list.append([filename, class_num])
+
+        self.transform = transforms.Compose(
+            [transforms.Resize((128, 128), Image.BICUBIC),
+             transforms.ToTensor(),
+             # transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+             ])
+
+    def __len__(self):
+        return len(self.file_name_label_list)
+
+    def __getitem__(self, id):
+        a = self.transform(Image.open(os.path.join(self.path, self.file_name_label_list[id][0])))
+        b = self.transform(Image.open(os.path.join(self.label_path, self.file_name_label_list[id][0])))
+        t1 = transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+        t2 = transforms.Normalize((0.5), (0.5))
+        if a.shape[0] == 1:
+            a = a.expand([3, -1, -1])
+        a, b = t1(a), t2(b)
+        return a, b
+
+
 def build_data(tag, path, batch_size, training, num_worker, **kwargs):
     if tag == "mnist":
         transform = transforms.Compose([
@@ -96,11 +145,17 @@ def build_data(tag, path, batch_size, training, num_worker, **kwargs):
     elif tag == "facades":
         return DataLoader(facades_dataset(os.path.join(path, "facades")), batch_size, shuffle=True,
                           num_workers=num_worker)
+    elif tag == "coco_obj":
+        return DataLoader(coco_obj_dataset(os.path.join(path, 'COCO'), **kwargs), batch_size, shuffle=True,
+                          num_workers=num_worker)
 
 
 if __name__ == "__main__":
     # data = build_data("cifar10", os.path.join(os.path.dirname(os.path.abspath(__file__)), "../data"), 8, True, 0)
-    data = build_data("facades", os.path.join(os.path.dirname(os.path.abspath(__file__)), "../data"), 8, True, 0)
+    # data = build_data("facades", os.path.join(os.path.dirname(os.path.abspath(__file__)), "../data"), 8, True, 0)
+    data = build_data('coco_obj', os.path.join(os.path.dirname(os.path.abspath(__file__)), "../data"), 16, True, 0,
+                      classes=[1])
+    print(len(data))
     for i, data in enumerate(data):
         print(i, data[0].shape, data[1].shape)
         exit(0)

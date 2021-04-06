@@ -4,6 +4,7 @@ from tensorboardX import SummaryWriter
 import torch.nn as nn
 from nets.generator import get_G
 from nets.discriminator import get_D
+from torch import autograd
 from tqdm import tqdm
 from model.flow import GLOW
 import math
@@ -12,6 +13,7 @@ import torch
 import yaml
 import os
 import argparse
+from tools.network import define_G, define_D, GANLoss, get_scheduler, update_learning_rate, NLayerDiscriminator
 
 log_file = None
 
@@ -51,37 +53,29 @@ def load(models, epoch, root):
     return epoch
 
 
-def calc_z_shapes(n_channel, input_size, n_levels):
-    z_shapes = []
+def calc_gradient_penalty(netD, real_data, label, fake_data, batch_size, gp_lambda):
+    alpha = torch.rand(batch_size, 1, 1, 1)
+    alpha = alpha.expand(real_data.shape).contiguous()
+    alpha = alpha.cuda()
 
-    for i in range(n_levels - 1):
-        input_size //= 2
-        n_channel *= 2
+    interpolates = alpha * real_data + ((1 - alpha) * fake_data)
 
-        z_shapes.append((n_channel, input_size, input_size))
+    interpolates = interpolates.cuda()
+    interpolates.requires_grad = True
 
-    input_size //= 2
-    z_shapes.append((n_channel * 4, input_size, input_size))
+    disc_interpolates = netD(torch.cat([label, interpolates], 1))[0]
 
-    return z_shapes
+    gradients = autograd.grad(outputs=disc_interpolates, inputs=interpolates,
+                              grad_outputs=torch.ones(disc_interpolates.size()).cuda(),
+                              create_graph=True, retain_graph=True, only_inputs=True)[0]
+    gradients = gradients.view(gradients.shape[0], -1)
 
-
-def calc_loss(log_p, logdet, image_size, n_bits):
-    # log_p = calc_log_p([z_list])
-    n_pixel = image_size * image_size * 3
-
-    loss = -n_bits * n_pixel
-    loss = loss + logdet + log_p
-
-    return (
-        (-loss / (math.log(2) * n_pixel)).mean(),
-        (log_p / (math.log(2) * n_pixel)).mean(),
-        (logdet / (math.log(2) * n_pixel)).mean(),
-    )
+    gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean() * gp_lambda
+    return gradient_penalty
 
 
 def train(args, root):
-    image_size = 256
+    image_size = 128
     global log_file
     if not os.path.exists(os.path.join(root, "logs")):
         os.mkdir(os.path.join(root, "logs"))
@@ -93,13 +87,14 @@ def train(args, root):
     to_log(args)
     writer = SummaryWriter(os.path.join(root, "logs/result/event/"))
 
-    dataloader = build_data(args['data_tag'], args['data_path'], args["bs"], True, num_worker=args["num_workers"])
+    dataloader = build_data(args['data_tag'], args['data_path'], args["bs"], True, num_worker=args["num_workers"],
+                            classes=[1])
 
-    G = get_G("unet", in_channels=3, out_channels=3, scale=5).cuda()
-    D = get_D("resnet", classes=2).cuda()
+    G = get_G("unet", in_channels=1, out_channels=3, scale=5).cuda()
+    D = get_D("dnn", classes=2).cuda()  # NLayerDiscriminator(6).cuda()# define_D(3 + 3, 64, 'basic', gpu_id=device) #
 
-    g_opt = torch.optim.Adam(G.parameters(), lr=args["lr"])
-    d_opt = torch.optim.Adam(D.parameters(), lr=args["lr"])
+    g_opt = torch.optim.Adam(G.parameters(), lr=args["lr"], betas=(0.5, 0.999))
+    d_opt = torch.optim.Adam(D.parameters(), lr=args["lr"], betas=(0.5, 0.999))
     g_sch = torch.optim.lr_scheduler.MultiStepLR(g_opt, args["lr_milestone"], gamma=0.5)
     d_sch = torch.optim.lr_scheduler.MultiStepLR(d_opt, args["lr_milestone"], gamma=0.5)
 
@@ -107,7 +102,7 @@ def train(args, root):
                       args["load_epoch"], root)
     tot_iter = (load_epoch + 1) * len(dataloader)
 
-    validity_loss = nn.BCELoss().cuda()
+    validity_loss = nn.MSELoss().cuda()
 
     real_label = torch.ones([1]).cuda()
     fake_label = torch.zeros([1]).cuda()
@@ -121,39 +116,43 @@ def train(args, root):
             tot_iter += 1
             image, mask = image.cuda(), mask.cuda()
 
-            d_opt.zero_grad()
-            # D_real
-            validity_label = real_label.expand(image.shape[0])
-            pvalidity, plabels = D(image)
-            D_loss_real_val = validity_loss(pvalidity, validity_label)
+            for _ in range(0, args['D_iter']):
+                d_opt.zero_grad()
+                # D_real
+                pvalidity, plabels = D(torch.cat([mask, image], 1))
+                validity_label = real_label.expand(pvalidity.shape)
+                D_loss_real_val = validity_loss(pvalidity, validity_label)
 
-            D_loss_real = D_loss_real_val
-            D_loss_real.backward()
-            # D_r = pvalidity.mean()
+                D_loss_real = D_loss_real_val
 
-            # D_fake
-            G_out = G(mask)
-            validity_label = fake_label.expand(image.shape[0])
-            pvalidity, plabels = D(G_out.detach())
-            D_loss_fake_val = validity_loss(pvalidity, validity_label)
+                # D_fake
+                G_out = G(mask)
+                pvalidity, plabels = D(torch.cat([mask, G_out.detach()], 1))
+                validity_label = fake_label.expand(pvalidity.shape)
+                D_loss_fake_val = validity_loss(pvalidity, validity_label)
 
-            D_loss_fake = D_loss_fake_val
-            D_loss_fake.backward()
-            # D_f = pvalidity.mean()
+                D_loss_fake = D_loss_fake_val
 
-            D_loss = D_loss_real + D_loss_fake
-            d_opt.step()
+                D_loss = (D_loss_real + D_loss_fake) / 2
+                D_loss.backward()
+
+                # wgan-gp
+                gradient_penalty = calc_gradient_penalty(D, image, mask, G_out.detach(), args['bs'], args['gp_lambda'])
+                gradient_penalty.backward()
+
+                d_opt.step()
 
             g_opt.zero_grad()
             # G
             # input = torch.randn([image.shape[0], 2, image_size, image_size]).cuda()
             # input[:, 1, :, :] = label.reshape(image.shape[0], 1, 1).expand(image.shape[0], image_size, image_size)
-            validity_label = real_label.expand(image.shape[0])
             G_out = G(mask)
-            pvalidity, plabels = D(G_out)
+            pvalidity, plabels = D(torch.cat([mask, G_out], 1))
+            validity_label = real_label.expand(pvalidity.shape)
+            G_loss_image = nn.L1Loss()(G_out, image)
             G_loss_val = validity_loss(pvalidity, validity_label)
 
-            G_loss = G_loss_val
+            G_loss = G_loss_val + G_loss_image * 10
             G_loss.backward()
 
             # DG_r = pvalidity.mean()
@@ -161,9 +160,10 @@ def train(args, root):
 
             if tot_iter % args['show_interval'] == 0:
                 to_log(
-                    'epoch: {}, batch: {}, D_loss: {:.5f}, D_loss_real: {:.5f}, D_loss_fake: {:.5f}, D_loss_real_val: {:.5f}, D_loss_fake_val: {:.5f}, G_loss: {:5f}, G_loss_val: {:.5f}, lr: {:.5f}'.format(
+                    'epoch: {}, batch: {}, D_loss: {:.5f}, D_loss_real: {:.5f}, D_loss_fake: {:.5f}, D_loss_real_val: {:.5f}, D_loss_fake_val: {:.5f}, G_loss: {:5f}, G_loss_val: {:.5f}, G_loss_image: {:5f}, gradient_penalty: {:5f}, lr: {:.5f}'.format(
                         epoch, i, D_loss.item(), D_loss_real.item(), D_loss_fake.item(), D_loss_real_val.item(),
-                        D_loss_fake_val.item(), G_loss.item(),G_loss_val.item(), g_sch.get_last_lr()[0]))
+                        D_loss_fake_val.item(), G_loss.item(), G_loss_val.item(), G_loss_image.item(),
+                        gradient_penalty.item(), g_sch.get_last_lr()[0]))
                 writer.add_scalar("loss/D_loss", D_loss.item(), tot_iter)
                 writer.add_scalar("loss/D_loss_real", D_loss_real.item(), tot_iter)
                 writer.add_scalar("loss/D_loss_fake", D_loss_fake.item(), tot_iter)
@@ -171,6 +171,8 @@ def train(args, root):
                 writer.add_scalar("loss/D_loss_fake_val", D_loss_fake_val.item(), tot_iter)
                 writer.add_scalar("loss/G_loss", G_loss.item(), tot_iter)
                 writer.add_scalar("loss/G_loss_val", G_loss_val.item(), tot_iter)
+                writer.add_scalar("loss/G_loss_image", G_loss_image.item(), tot_iter)
+                writer.add_scalar("loss/gradient_penalty", gradient_penalty.item(), tot_iter)
                 writer.add_scalar("lr", g_sch.get_last_lr()[0], tot_iter)
 
         if epoch % args["snapshot_interval"] == 0:
@@ -185,6 +187,7 @@ def train(args, root):
             # input_test[:, 1, :, :] = label.reshape(64, 1, 1).expand(64, image_size, image_size)
             # G_out = G(input_test)
             G_out = G_out / 2 + 0.5
+            G_out = G_out.clamp(0, 1)
             save_image(G_out, os.path.join(root, "logs/output-{}.png".format(epoch)))
 
 

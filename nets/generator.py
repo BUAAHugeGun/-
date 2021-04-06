@@ -1,5 +1,6 @@
 import torch
 from torch import nn
+import math
 
 
 class MNIST_G(nn.Module):
@@ -72,7 +73,7 @@ def _conv_layer(in_channels, out_channels, kernel, stride, padding, bias=True, n
                   padding=padding, bias=bias)
     ]
     if norm:
-        layers.append(nn.BatchNorm2d(out_channels))
+        layers.append(nn.InstanceNorm2d(out_channels))
     if act == "relu":
         layers.append(nn.ReLU())
     elif act == "tanh":
@@ -91,7 +92,7 @@ def _deconv_layer(in_channels, out_channels, kernel, stride, padding, bias=True,
                   padding=padding, bias=bias),
     ]
     if norm:
-        layers.append(nn.BatchNorm2d(out_channels))
+        layers.append(nn.InstanceNorm2d(out_channels))
     layers.append(nn.ReLU())
     return nn.Sequential(*layers)
 
@@ -113,6 +114,21 @@ class UNET(nn.Module):
         self.out_channels = out_channels
         self.scale = scale
         self.build()
+
+    def initial(self, scale_factor=1.0, mode="FAN_IN"):
+        if mode != "FAN_IN" and mode != "FAN_out":
+            assert 0
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
+                if mode == "FAN_IN":
+                    n = m.kernel_size[0] * m.kernel_size[1] * m.in_channels
+                    m.weight.data.normal_(0, math.sqrt(scale_factor / n))
+                else:
+                    n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
+                    m.weight.data.normal_(0, math.sqrt(scale_factor / n))
+            elif isinstance(m, nn.InstanceNorm2d):
+                m.weight.data.fill_(1)
+                m.bias.data.zero_()
 
     def get_block(self, in_channels, out_channels, pool=True, up=False):
         layers = []
@@ -167,6 +183,9 @@ def get_G(tag, **kwargs):
 
 if __name__ == "__main__":
     a = torch.randn([4, 2, 64, 64])
+    aa = a.clone()
+    a.requires_grad = True
     G = get_G("unet", in_channels=2, out_channels=1, scale=5)
-    torch.save(G.state_dict(), "test.pth")
-    print(G(a).shape)
+    b = G(a).mean()
+    b.backward()
+    print((a - aa).abs().sum())

@@ -31,12 +31,16 @@ if __name__ == "__main__":
     print("loading data from: {}".format(data_path))
 
     warnings.filterwarnings("ignore")
-    annotation_dir = os.path.join(data_path, "annotations", "instances_val2017.json")
+    annotation_dir = os.path.join(data_path, "annotations", "instances_train2017.json")
     coco = COCO(annotation_dir)
-    input_dir = os.path.join(data_path, "val_image")
-    output_dir = os.path.join(data_path, "val_cut")
+    input_dir = os.path.join(data_path, "train_image")
+    output_dir = os.path.join(data_path, "train_cut")
+    input_label_dir = os.path.join(data_path, "train_label")
+    output_label_dir = os.path.join(data_path, "train_label_cut")
     if not os.path.exists(output_dir):
         os.mkdir(output_dir)
+    if not os.path.exists(output_label_dir):
+        os.mkdir(output_label_dir)
     data_list_file = open(os.path.join(output_dir, "data_list.txt"), "w")
 
     cats = coco.loadCats(coco.getCatIds())
@@ -45,8 +49,11 @@ if __name__ == "__main__":
         id = imgIds[ix]
         img_dict = coco.loadImgs(id)[0]
         filename = img_dict["file_name"]
-        image_path = os.path.join(input_dir, filename)
-        img = Image.open(image_path)
+        # image_path = os.path.join(input_dir, filename)
+        filename = filename[0:-4] + '.png'
+        label_path = os.path.join(input_label_dir, filename)
+        # img = Image.open(image_path)
+        label = Image.open(label_path)
         annIds = coco.getAnnIds(imgIds=id, catIds=[], iscrowd=0)
         anns = coco.loadAnns(annIds)
         '''
@@ -62,14 +69,18 @@ if __name__ == "__main__":
                 bbox[i] = math.floor(bbox[i])
             bbox[2] += bbox[0]
             bbox[3] += bbox[1]
-            obj = img.crop(bbox)
-            W, H = img.size
-            w, h = obj.size
+            # obj = img.crop(bbox)
+            obj_label = label.crop(bbox)
+            W, H = label.size
+            w, h = obj_label.size
             if w < 64 or h < 64:
                 continue
             if bbox[0] < 5 or bbox[1] < 5 or bbox[2] >= W - 5 or bbox[3] >= H - 5:
                 continue
             obj_name = str(id) + "_" + str(ann['id']) + ".png"
-            obj_path = os.path.join(output_dir, obj_name)
-            obj.save(obj_path)
+            obj_label_name = str(id) + "_" + str(ann['id']) + ".png"
+            # obj_path = os.path.join(output_dir, obj_name)
+            obj_label_path = os.path.join(output_label_dir, obj_name)
+            # obj.save(obj_path)
+            obj_label.save(obj_label_path)
             print(obj_name, ann['category_id'], classes[ann['category_id']], file=data_list_file)
