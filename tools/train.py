@@ -93,7 +93,6 @@ def imagetensor2np(x):
 
 
 def train(args, root):
-    image_size = 128
     global log_file
     if not os.path.exists(os.path.join(root, "logs")):
         os.mkdir(os.path.join(root, "logs"))
@@ -106,7 +105,7 @@ def train(args, root):
     writer = SummaryWriter(os.path.join(root, "logs/result/event/"))
 
     dataloader = build_data(args['data_tag'], args['data_path'], args["bs"], True, num_worker=args["num_workers"],
-                            classes=[1])
+                            classes=[1], image_size=args['image_size'])
 
     G = get_G("unet", in_channels=1, out_channels=3, scale=5).cuda()
     D = get_D("dnn", classes=2).cuda()  # NLayerDiscriminator(6).cuda()# define_D(3 + 3, 64, 'basic', gpu_id=device) #
@@ -181,7 +180,7 @@ def train(args, root):
             if tot_iter % args['show_interval'] == 0:
                 to_log(
                     'epoch: {}, batch: {}, D_loss: {:.5f}, D_loss_real: {:.5f}, D_loss_fake: {:.5f},' \
-                    'D_loss_real_val: {:.5f},\ D_loss_fake_val: {:.5f}, G_loss: {:5f}, G_loss_val: {:.5f},' \
+                    'D_loss_real_val: {:.5f}, D_loss_fake_val: {:.5f}, G_loss: {:5f}, G_loss_val: {:.5f},' \
                     'l1: {:5f}, ms-ssim: {:5f}, gradient_penalty: {:5f}, lr: {:.5f}'.format(
                         epoch, i, D_loss.item(), D_loss_real.item(), D_loss_fake.item(), D_loss_real_val.item(),
                         D_loss_fake_val.item(), G_loss.item(), G_loss_val.item(), l1_loss.item(), msssim_loss.item(),

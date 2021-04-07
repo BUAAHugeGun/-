@@ -103,6 +103,7 @@ class coco_obj_dataset(Dataset):
         # annotation_dir = os.path.join(path, "annotations", "instances_{}2017.json".format("train" if train else 'val'))
         # self.coco = COCO(annotation_dir)
         self.file_name_label_list = []
+        self.image_size = kwargs.get('image_size', 128)
         for line in lines:
             line = line[0:-1]
             filename, class_num, class_name = line.split(' ', 2)
@@ -112,7 +113,7 @@ class coco_obj_dataset(Dataset):
                 self.file_name_label_list.append([filename, class_num])
 
         self.transform = transforms.Compose(
-            [transforms.Resize((128, 128), Image.BICUBIC),
+            [transforms.Resize((self.image_size, self.image_size), Image.BICUBIC),
              transforms.ToTensor(),
              # transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
              ])
