@@ -1,6 +1,7 @@
 from dataset.data_builder import build_data
 from torchvision.utils import save_image
 from tensorboardX import SummaryWriter
+from loss import SSIM_Loss
 import torch.nn as nn
 from nets.generator import get_G
 from nets.discriminator import get_D
@@ -77,7 +78,7 @@ def calc_gradient_penalty(netD, real_data, label, fake_data, batch_size, gp_lamb
 
 # BCHW
 def batch_image_merge(image):
-    #image = torch.cat(image.split(4, 0), 2)
+    # image = torch.cat(image.split(4, 0), 2)
     image = torch.cat(image.split(1, 0), 3)
     # CH'W'
     return image
@@ -120,6 +121,7 @@ def train(args, root):
     tot_iter = (load_epoch + 1) * len(dataloader)
 
     validity_loss = nn.MSELoss().cuda()
+    msssim = SSIM_Loss.msssim
 
     real_label = torch.ones([1]).cuda()
     fake_label = torch.zeros([1]).cuda()
@@ -157,7 +159,6 @@ def train(args, root):
                 gradient_penalty = calc_gradient_penalty(D, image, mask, G_out.detach(), mask.shape[0],
                                                          args['gp_lambda'])
                 gradient_penalty.backward()
-
                 d_opt.step()
 
             g_opt.zero_grad()
@@ -167,10 +168,11 @@ def train(args, root):
             G_out = G(mask)
             pvalidity, plabels = D(torch.cat([mask, G_out], 1))
             validity_label = real_label.expand(pvalidity.shape)
-            G_loss_image = nn.L1Loss()(G_out, image)
+            l1_loss = nn.L1Loss()(G_out, image)
+            msssim_loss = 1 - msssim(G_out, image, normalize=True)
             G_loss_val = validity_loss(pvalidity, validity_label)
 
-            G_loss = G_loss_val + G_loss_image * 10
+            G_loss = G_loss_val + l1_loss * args['lambda_l1'] + msssim_loss * args['lambda_ssim']
             G_loss.backward()
 
             # DG_r = pvalidity.mean()
@@ -178,18 +180,21 @@ def train(args, root):
 
             if tot_iter % args['show_interval'] == 0:
                 to_log(
-                    'epoch: {}, batch: {}, D_loss: {:.5f}, D_loss_real: {:.5f}, D_loss_fake: {:.5f}, D_loss_real_val: {:.5f}, D_loss_fake_val: {:.5f}, G_loss: {:5f}, G_loss_val: {:.5f}, G_loss_image: {:5f}, gradient_penalty: {:5f}, lr: {:.5f}'.format(
+                    'epoch: {}, batch: {}, D_loss: {:.5f}, D_loss_real: {:.5f}, D_loss_fake: {:.5f},' \
+                    'D_loss_real_val: {:.5f},\ D_loss_fake_val: {:.5f}, G_loss: {:5f}, G_loss_val: {:.5f},' \
+                    'l1: {:5f}, ms-ssim: {:5f}, gradient_penalty: {:5f}, lr: {:.5f}'.format(
                         epoch, i, D_loss.item(), D_loss_real.item(), D_loss_fake.item(), D_loss_real_val.item(),
-                        D_loss_fake_val.item(), G_loss.item(), G_loss_val.item(), G_loss_image.item(),
+                        D_loss_fake_val.item(), G_loss.item(), G_loss_val.item(), l1_loss.item(), msssim_loss.item(),
                         gradient_penalty.item(), g_sch.get_last_lr()[0]))
                 writer.add_scalar("loss/D_loss", D_loss.item(), tot_iter)
                 writer.add_scalar("loss/D_loss_real", D_loss_real.item(), tot_iter)
                 writer.add_scalar("loss/D_loss_fake", D_loss_fake.item(), tot_iter)
-                writer.add_scalar("loss/D_loss_real_val", D_loss_real_val.item(), tot_iter)
-                writer.add_scalar("loss/D_loss_fake_val", D_loss_fake_val.item(), tot_iter)
+                # writer.add_scalar("loss/D_loss_real_val", D_loss_real_val.item(), tot_iter)
+                # writer.add_scalar("loss/D_loss_fake_val", D_loss_fake_val.item(), tot_iter)
                 writer.add_scalar("loss/G_loss", G_loss.item(), tot_iter)
                 writer.add_scalar("loss/G_loss_val", G_loss_val.item(), tot_iter)
-                writer.add_scalar("loss/G_loss_image", G_loss_image.item(), tot_iter)
+                writer.add_scalar("loss/l1", l1_loss.item(), tot_iter)
+                writer.add_scalar("loss/ms-ssim", msssim_loss.item(), tot_iter)
                 writer.add_scalar("loss/gradient_penalty", gradient_penalty.item(), tot_iter)
                 writer.add_scalar("lr", g_sch.get_last_lr()[0], tot_iter)
 
