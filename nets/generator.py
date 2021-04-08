@@ -132,15 +132,19 @@ class UNET(nn.Module):
                 m.weight.data.fill_(1)
                 m.bias.data.zero_()
 
-    def get_block(self, in_channels, out_channels, pool=True, up=False, norm1=True, norm2=True):
+    def get_block(self, in_channels, out_channels, pool=True, up=False, norm1=True, norm2=True, half=True):
         layers = []
+        half = up and half
         if pool:
             layers.append(_pool_layer(2, 2, 0, "avg"))
-        layers.append(_conv_layer(in_channels, out_channels, 3, 1, 1, norm=norm1))
+        #layers.append(_conv_layer(in_channels, out_channels, 3, 1, 1, norm=norm1))
         if up:
-            layers.append(_deconv_layer(out_channels, out_channels // 2, 3, 1, 1, norm=norm2))
+            if half:
+                layers.append(_deconv_layer(in_channels, out_channels // 2, 3, 1, 1, norm=norm2))
+            else:
+                layers.append(_deconv_layer(in_channels, out_channels, 3, 1, 1, norm=norm2))
         else:
-            layers.append(_conv_layer(out_channels, out_channels, 3, 1, 1, norm=norm2))
+            layers.append(_conv_layer(in_channels, out_channels, 3, 1, 1, norm=norm2))
         return nn.Sequential(*layers)
 
     def build(self):
@@ -151,12 +155,13 @@ class UNET(nn.Module):
             in_channels = 32 * (2 ** i)
             self.G.append(
                 self.get_block(min(self.Max, in_channels), min(self.Max, in_channels * 2), True, i == (self.scale - 1),
-                               norm1=(i > 0), norm2=i < self.scale))
+                               norm1=(i > 0), norm2=i < self.scale, half=False))
         for i in range(self.scale):
             in_channels = 32 * (2 ** (self.scale - i))
             out_channels = in_channels // 2
             self.D.append(
-                self.get_block(min(self.Max, in_channels), min(self.Max, in_channels), False, i < (self.scale - 1)))
+                self.get_block(min(self.Max * 2, in_channels), min(self.Max*2, out_channels), False,
+                               i < (self.scale - 1)))
         self.post_conv = _conv_layer(32, self.out_channels, 3, 1, 1, act="tanh", norm=False)
         self.g_list = nn.Sequential(*self.G)
         self.d_list = nn.Sequential(*self.D)
@@ -187,88 +192,13 @@ def get_G(tag, **kwargs):
             assert 0
 
 
-class UNetDown(nn.Module):
-    def __init__(self, in_size, out_size, normalize=True, dropout=0.0):
-        super(UNetDown, self).__init__()
-        layers = [nn.Conv2d(in_size, out_size, 4, 2, 1, bias=False)]
-        if normalize:
-            layers.append(nn.InstanceNorm2d(out_size))
-        layers.append(nn.LeakyReLU(0.2))
-        if dropout:
-            layers.append(nn.Dropout(dropout))
-        self.model = nn.Sequential(*layers)
-
-    def forward(self, x):
-        return self.model(x)
-
-
-class UNetUp(nn.Module):
-    def __init__(self, in_size, out_size, dropout=0.0):
-        super(UNetUp, self).__init__()
-        layers = [
-            nn.ConvTranspose2d(in_size, out_size, 4, 2, 1, bias=False),
-            nn.InstanceNorm2d(out_size),
-            nn.ReLU(inplace=True),
-        ]
-        if dropout:
-            layers.append(nn.Dropout(dropout))
-
-        self.model = nn.Sequential(*layers)
-
-    def forward(self, x, skip_input):
-        x = self.model(x)
-        x = torch.cat((x, skip_input), 1)
-
-        return x
-
-
-class GeneratorUNet(nn.Module):
-    def __init__(self, in_channels=3, out_channels=3):
-        super(GeneratorUNet, self).__init__()
-
-        self.down1 = UNetDown(in_channels,
-                              64,
-                              normalize=False)
-        self.down2 = UNetDown(64, 128)
-        self.down3 = UNetDown(128, 256)
-        self.down4 = UNetDown(256, 512)
-        self.down5 = UNetDown(512, 512)
-        self.down6 = UNetDown(512, 512, normalize=False)
-
-        self.up1 = UNetUp(512, 512)
-        self.up2 = UNetUp(1024, 512)
-        self.up3 = UNetUp(1024, 256)
-        self.up4 = UNetUp(512, 128)
-        self.up5 = UNetUp(256, 64)
-
-        self.final = nn.Sequential(
-            nn.ConvTranspose2d(128, out_channels, 4, 2, 1),
-            nn.Tanh(),
-        )
-
-    def forward(self, x):
-        # U-Net generator with skip connections from encoder to decoder
-        d1 = self.down1(x)
-        d2 = self.down2(d1)
-        d3 = self.down3(d2)
-        d4 = self.down4(d3)
-        d5 = self.down5(d4)
-        d6 = self.down6(d5)
-        u1 = self.up1(d6, d5)
-        u2 = self.up2(u1, d4)
-        u3 = self.up3(u2, d3)
-        u4 = self.up4(u3, d2)
-        u5 = self.up5(u4, d1)
-
-        return self.final(u5)
-
-
 if __name__ == "__main__":
     a = torch.randn([4, 2, 64, 64])
     aa = a.clone()
     a.requires_grad = True
     G = get_G("unet", in_channels=2, out_channels=1, scale=6)
     print(G)
+    print(G(a).shape)
     num_params = 0
     for param in G.parameters():
         num_params += param.numel()
