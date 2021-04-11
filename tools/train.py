@@ -107,7 +107,7 @@ def train(args, root):
     dataloader = build_data(args['data_tag'], args['data_path'], args["bs"], True, num_worker=args["num_workers"],
                             classes=[1], image_size=args['image_size'])
 
-    G = get_G("unet", in_channels=1, out_channels=3, scale=5).cuda()
+    G = get_G("unet", in_channels=1, out_channels=3, scale=6).cuda()
     D = get_D("dnn", classes=2).cuda()  # NLayerDiscriminator(6).cuda()# define_D(3 + 3, 64, 'basic', gpu_id=device) #
 
     g_opt = torch.optim.Adam(G.parameters(), lr=args["lr"], betas=(0.5, 0.9))

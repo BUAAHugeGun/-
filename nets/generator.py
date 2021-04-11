@@ -1,6 +1,7 @@
 import torch
 from torch import nn
 import math
+from nets.spade import SPADE, SPADE_CONV, SPADE_POOL
 
 
 class MNIST_G(nn.Module):
@@ -108,6 +109,29 @@ def _pool_layer(kernel, stride, padding, mode="max"):
         assert 0
 
 
+class UNET_BLOCK(nn.Module):
+    def __init__(self, in_channels, out_channels, pool=True, up=False, norm1=True, norm2=True, half=True):
+        super(UNET_BLOCK, self).__init__()
+        half = up and half
+        if pool:
+            self.pool = nn.AvgPool2d(2, 2, 0)
+        else:
+            self.pool = None
+        # layers.append(_conv_layer(in_channels, out_channels, 3, 1, 1, norm=norm1))
+        if up:
+            if half:
+                self.layer = SPADE_CONV(nn.ConvTranspose2d, in_channels, out_channels // 2, 4, 2, 1, norm=norm2)
+            else:
+                self.layer = SPADE_CONV(nn.ConvTranspose2d, in_channels, out_channels, 4, 2, 1, norm=norm2)
+        else:
+            self.layer = SPADE_CONV(nn.Conv2d, in_channels, out_channels, 3, 1, 1, norm=norm2)
+
+    def forward(self, x, seg):
+        if self.pool is not None:
+            x = self.pool(x)
+        return self.layer(x, seg)
+
+
 class UNET(nn.Module):
     def __init__(self, in_channels, out_channels, scale=5, Max=512):
         super(UNET, self).__init__()
@@ -132,50 +156,36 @@ class UNET(nn.Module):
                 m.weight.data.fill_(1)
                 m.bias.data.zero_()
 
-    def get_block(self, in_channels, out_channels, pool=True, up=False, norm1=True, norm2=True, half=True):
-        layers = []
-        half = up and half
-        if pool:
-            layers.append(_pool_layer(2, 2, 0, "avg"))
-        #layers.append(_conv_layer(in_channels, out_channels, 3, 1, 1, norm=norm1))
-        if up:
-            if half:
-                layers.append(_deconv_layer(in_channels, out_channels // 2, 3, 1, 1, norm=norm2))
-            else:
-                layers.append(_deconv_layer(in_channels, out_channels, 3, 1, 1, norm=norm2))
-        else:
-            layers.append(_conv_layer(in_channels, out_channels, 3, 1, 1, norm=norm2))
-        return nn.Sequential(*layers)
-
     def build(self):
         self.G = []
         self.D = []
-        self.pre_conv = _conv_layer(self.in_channels, 32, 3, 1, 1, norm=False)
+        self.pre_conv = SPADE_CONV(nn.Conv2d, self.in_channels, 32, 3, 1, 1, norm=False)
         for i in range(self.scale):
             in_channels = 32 * (2 ** i)
             self.G.append(
-                self.get_block(min(self.Max, in_channels), min(self.Max, in_channels * 2), True, i == (self.scale - 1),
-                               norm1=(i > 0), norm2=i < self.scale, half=False))
+                UNET_BLOCK(min(self.Max, in_channels), min(self.Max, in_channels * 2), True, i == (self.scale - 1),
+                           norm1=(i > 0), norm2=i < self.scale, half=False))
         for i in range(self.scale):
             in_channels = 32 * (2 ** (self.scale - i))
             out_channels = in_channels // 2
             self.D.append(
-                self.get_block(min(self.Max * 2, in_channels), min(self.Max*2, out_channels), False,
-                               i < (self.scale - 1)))
-        self.post_conv = _conv_layer(32, self.out_channels, 3, 1, 1, act="tanh", norm=False)
+                UNET_BLOCK(min(self.Max * 2, in_channels), min(self.Max * 2, out_channels), False,
+                           i < (self.scale - 1)))
+        self.post_conv = SPADE_CONV(nn.Conv2d, 32, self.out_channels, 3, 1, 1, act="tanh", norm=False)
         self.g_list = nn.Sequential(*self.G)
         self.d_list = nn.Sequential(*self.D)
 
     def forward(self, x):
+        seg = x.clone().detach()
         out = []
-        out.append(self.pre_conv(x))
+        out.append(self.pre_conv(x, seg))
         for i in range(self.scale):
-            out.append(self.G[i](out[i]))
+            out.append(self.G[i](out[i], seg))
         for i in range(self.scale):
             j = self.scale - i - 1
             input = torch.cat([out[j + 1], out[j]], 1)
-            out[j] = self.D[i](input)
-        return self.post_conv(out[0])
+            out[j] = self.D[i](input, seg)
+        return self.post_conv(out[0], seg)
 
 
 def get_G(tag, **kwargs):
@@ -193,11 +203,11 @@ def get_G(tag, **kwargs):
 
 
 if __name__ == "__main__":
-    a = torch.randn([4, 2, 64, 64])
+    a = torch.randn([32, 1, 64, 64])
     aa = a.clone()
     a.requires_grad = True
-    G = get_G("unet", in_channels=2, out_channels=1, scale=6)
-    print(G)
+    G = get_G("unet", in_channels=1, out_channels=3, scale=6)
+    # print(G)
     print(G(a).shape)
     num_params = 0
     for param in G.parameters():
