@@ -1,6 +1,7 @@
 import torch
 from torch.utils.data import DataLoader, Dataset
 from torchvision import datasets as tv_datasets
+from torch.nn import functional as F
 from PIL import Image
 from torchvision import transforms
 import os
@@ -91,17 +92,21 @@ class coco_obj_dataset(Dataset):
         if train:
             self.path = os.path.join(path, "train_cut")
             self.label_path = os.path.join(path, "train_label_cut")
+            self.mask_path = os.path.join(path, "train_mask_cut")
         else:
             self.path = os.path.join(path, "val_cut")
             self.label_path = os.path.join(path, "val_label_cut")
+            self.mask_path = os.path.join(path, "val_mask_cut")
         data_list_path = os.path.join(self.path, "data_list.txt")
         f = open(data_list_path)
         classes = kwargs.get('classes', None)
         if classes is None:
             classes = [x for x in range(1, 91)]
         lines = f.readlines()
+
         # annotation_dir = os.path.join(path, "annotations", "instances_{}2017.json".format("train" if train else 'val'))
         # self.coco = COCO(annotation_dir)
+
         self.file_name_label_list = []
         self.image_size = kwargs.get('image_size', 128)
         for line in lines:
@@ -110,7 +115,7 @@ class coco_obj_dataset(Dataset):
             id, obj_id = filename.split('.')[0].split('_')
             id, obj_id, class_num = int(id), int(obj_id), int(class_num)
             if class_num in classes:
-                self.file_name_label_list.append([filename, class_num])
+                self.file_name_label_list.append([filename, obj_id, class_num])
 
         self.transform = transforms.Compose(
             [transforms.Resize((self.image_size, self.image_size), Image.BICUBIC),
@@ -124,12 +129,14 @@ class coco_obj_dataset(Dataset):
     def __getitem__(self, id):
         a = self.transform(Image.open(os.path.join(self.path, self.file_name_label_list[id][0])))
         b = self.transform(Image.open(os.path.join(self.label_path, self.file_name_label_list[id][0])))
+        mask = transforms.ToTensor()(transforms.Resize((self.image_size, self.image_size), Image.NEAREST)(
+            Image.open(os.path.join(self.mask_path, self.file_name_label_list[id][0]))))
         t1 = transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
         t2 = transforms.Normalize((0.5), (0.5))
         if a.shape[0] == 1:
             a = a.expand([3, -1, -1])
         a, b = t1(a), t2(b)
-        return a, b
+        return a, b, mask
 
 
 def build_data(tag, path, batch_size, training, num_worker, **kwargs):

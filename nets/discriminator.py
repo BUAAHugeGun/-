@@ -122,7 +122,7 @@ class Discriminator(nn.Module):
         self.classes = classes
         self.conv = nn.Sequential(
             # 6,256,256
-            _conv_layer(4, 64, 4, 2, 1, norm=False),
+            _conv_layer(3, 64, 4, 2, 1, norm=False),
             # _pool_layer(2, 2, 0),
             _conv_layer(64, 128, 4, 2, 1, bias=False),
             # _pool_layer(2, 2, 0),

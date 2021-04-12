@@ -41,7 +41,7 @@ class SPADE_CONV(Module):
         super(SPADE_CONV, self).__init__()
         self.conv = conv_layer(in_channels, out_channels, kernel, stride, padding, bias=bias)
         if norm:
-            self.norm = SPADE(out_channels)
+            self.norm = nn.InstanceNorm2d(out_channels)  # SPADE(out_channels)
         else:
             self.norm = None
         if act == "relu":
@@ -56,7 +56,7 @@ class SPADE_CONV(Module):
     def forward(self, x, seg):
         x = self.conv(x)
         if self.norm is not None:
-            x = self.norm(x, seg)
+            x = self.norm(x)  # , seg)
         return self.act(x)
 
 
