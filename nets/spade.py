@@ -5,32 +5,36 @@ from torch.nn.functional import interpolate, relu
 from torch import nn
 
 
-class SPADE(Module):
-    def __init__(self, k, spade_filter=128, spade_kernel=3):
-        super().__init__()
-        num_filters = spade_filter
-        kernel_size = spade_kernel
-        self.conv = spectral_norm(Conv2d(1, num_filters, kernel_size=(kernel_size, kernel_size), padding=1))
-        self.conv_gamma = spectral_norm(Conv2d(num_filters, k, kernel_size=(kernel_size, kernel_size), padding=1))
-        self.conv_beta = spectral_norm(Conv2d(num_filters, k, kernel_size=(kernel_size, kernel_size), padding=1))
+class SPADE(nn.Module):
+    # seg_channel : # channel of segmentation map
+    # main_channel : # channel of main input and output stream channel
+    def __init__(self, main_channel):
+        super(SPADE, self).__init__()
+        self.seg_channel = 1
+        self.main_channel = main_channel
+        self.n_hidden = 128
+
+        # self.batch = nn.SyncBatchNorm(self.main_channel)
+        self.batch = nn.BatchNorm2d(self.main_channel)
+
+        self.share_cov = nn.Sequential(
+            nn.Conv2d(in_channels=self.seg_channel, out_channels=self.n_hidden, kernel_size=3, stride=1, padding=1),
+            nn.ReLU()
+        )
+        self.gamma = nn.Conv2d(in_channels=self.n_hidden, out_channels=self.main_channel, kernel_size=3, stride=1,
+                               padding=1)
+        self.beta = nn.Conv2d(in_channels=self.n_hidden, out_channels=self.main_channel, kernel_size=3, stride=1,
+                              padding=1)
 
     def forward(self, x, seg):
-        N, C, H, W = x.size()
+        x = self.batch(x)  # input channel
 
-        sum_channel = torch.sum(x.reshape(N, C, H * W), dim=-1)
-        mean = sum_channel / (N * H * W)
-        std = torch.sqrt((sum_channel ** 2 - mean ** 2) / (N * H * W))
+        seg = interpolate(input=seg, size=x.shape[2:], mode='nearest')
+        seg_share = self.share_cov(seg)
+        seg_gamma = self.gamma(seg_share)
+        seg_beta = self.beta(seg_share)
 
-        mean = torch.unsqueeze(torch.unsqueeze(mean, -1), -1)
-        std = torch.unsqueeze(torch.unsqueeze(std, -1), -1)
-        x = (x - mean) / std
-
-        seg = interpolate(seg, size=(H, W), mode='nearest')
-        seg = relu(self.conv(seg))
-        seg_gamma = self.conv_gamma(seg)
-        seg_beta = self.conv_beta(seg)
-
-        x = torch.matmul(seg_gamma, x) + seg_beta
+        x = x * (1 + seg_gamma) + seg_beta
 
         return x
 
@@ -41,7 +45,7 @@ class SPADE_CONV(Module):
         super(SPADE_CONV, self).__init__()
         self.conv = conv_layer(in_channels, out_channels, kernel, stride, padding, bias=bias)
         if norm:
-            self.norm = nn.InstanceNorm2d(out_channels)  # SPADE(out_channels)
+            self.norm = SPADE(out_channels)
         else:
             self.norm = None
         if act == "relu":
@@ -56,7 +60,7 @@ class SPADE_CONV(Module):
     def forward(self, x, seg):
         x = self.conv(x)
         if self.norm is not None:
-            x = self.norm(x)  # , seg)
+            x = self.norm(x, seg)
         return self.act(x)
 
 
@@ -70,7 +74,7 @@ class SPADE_POOL(Module):
 
 
 if __name__ == "__main__":
-    spade = SPADE_CONV(nn.Conv2d, 1, 64, 5, 2, 1)
+    spade = SPADE_CONV(nn.Conv2d, 1, 64, 3, 1, 1)
     seg = torch.randn(32, 1, 64, 64)
     a = torch.randn([32, 1, 64, 64])
     num_params = 0
