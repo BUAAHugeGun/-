@@ -65,7 +65,7 @@ def calc_gradient_penalty(netD, real_data, label, fake_data, batch_size, gp_lamb
     interpolates = interpolates.cuda()
     interpolates.requires_grad = True
 
-    disc_interpolates = netD(interpolates)[0]  # netD(torch.cat([label, interpolates], 1))[0]
+    disc_interpolates = netD(torch.cat([label, interpolates], 1))[0]
 
     gradients = autograd.grad(outputs=disc_interpolates, inputs=interpolates,
                               grad_outputs=torch.ones(disc_interpolates.size()).cuda(),
@@ -132,20 +132,19 @@ def train(args, root):
         for i, (image, mask, M) in enumerate(dataloader):
             tot_iter += 1
             image, mask, M = image.cuda(), mask.cuda(), M.cuda()
-            noise = torch.randn(mask.shape).cuda()
 
             for _ in range(0, args['D_iter']):
                 d_opt.zero_grad()
                 # D_real
-                pvalidity, plabels = D(image)  # D(torch.cat([mask, image], 1))
+                pvalidity, plabels = D(torch.cat([mask, image], 1))
                 validity_label = real_label.expand(pvalidity.shape)
                 D_loss_real_val = validity_loss(pvalidity, validity_label)
 
                 D_loss_real = D_loss_real_val
 
                 # D_fake
-                G_out = G(noise)  # mask)
-                pvalidity, plabels = D(G_out.detach())  # D(torch.cat([mask, G_out.detach()], 1))
+                G_out = G(mask)
+                pvalidity, plabels = D(torch.cat([mask, G_out.detach()], 1))
                 validity_label = fake_label.expand(pvalidity.shape)
                 D_loss_fake_val = validity_loss(pvalidity, validity_label)
 
@@ -155,7 +154,7 @@ def train(args, root):
                 D_loss.backward()
 
                 # wgan-gp
-                gradient_penalty = calc_gradient_penalty(D, image, noise, G_out.detach(), mask.shape[0],
+                gradient_penalty = calc_gradient_penalty(D, image, mask, G_out.detach(), mask.shape[0],
                                                          args['gp_lambda'])
                 gradient_penalty.backward()
                 d_opt.step()
@@ -164,13 +163,13 @@ def train(args, root):
             # G
             # input = torch.randn([image.shape[0], 2, image_size, image_size]).cuda()
             # input[:, 1, :, :] = label.reshape(image.shape[0], 1, 1).expand(image.shape[0], image_size, image_size)
-            G_out = G(noise)  # mask)
-            pvalidity, plabels = D(G_out)  # D(torch.cat([mask, G_out], 1))
+            G_out = G(mask)
+            pvalidity, plabels = D(torch.cat([mask, G_out], 1))
             validity_label = real_label.expand(pvalidity.shape)
             l1_loss = nn.L1Loss()(G_out, image)
             G_loss_val = validity_loss(pvalidity, validity_label)
 
-            G_loss = G_loss_val  # + l1_loss * args['lambda_l1']
+            G_loss = G_loss_val + l1_loss * args['lambda_l1']
             G_loss.backward()
 
             # DG_r = pvalidity.mean()
