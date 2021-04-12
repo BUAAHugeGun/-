@@ -119,7 +119,7 @@ def train(args, root):
                       args["load_epoch"], root)
     tot_iter = (load_epoch + 1) * len(dataloader)
 
-    validity_loss = nn.MSELoss().cuda()
+    # validity_loss = nn.MSELoss().cuda()
 
     real_label = torch.ones([1]).cuda()
     fake_label = torch.zeros([1]).cuda()
@@ -137,26 +137,26 @@ def train(args, root):
                 d_opt.zero_grad()
                 # D_real
                 pvalidity, plabels = D(torch.cat([mask, image], 1))
-                validity_label = real_label.expand(pvalidity.shape)
-                D_loss_real_val = validity_loss(pvalidity, validity_label)
-
+                # validity_label = real_label.expand(pvalidity.shape)
+                D_loss_real_val = -pvalidity.mean()  # validity_loss(pvalidity, validity_label)
                 D_loss_real = D_loss_real_val
+                D_loss_real.backward()
 
                 # D_fake
                 G_out = G(mask)
                 pvalidity, plabels = D(torch.cat([mask, G_out.detach()], 1))
-                validity_label = fake_label.expand(pvalidity.shape)
-                D_loss_fake_val = validity_loss(pvalidity, validity_label)
-
+                # validity_label = fake_label.expand(pvalidity.shape)
+                D_loss_fake_val = pvalidity.mean()  # validity_loss(pvalidity, validity_label)
                 D_loss_fake = D_loss_fake_val
-
-                D_loss = (D_loss_real + D_loss_fake) / 2
-                D_loss.backward()
+                D_loss_fake.backward()
 
                 # wgan-gp
                 gradient_penalty = calc_gradient_penalty(D, image, mask, G_out.detach(), mask.shape[0],
                                                          args['gp_lambda'])
                 gradient_penalty.backward()
+
+                # D-cost
+                D_loss = D_loss_fake + D_loss_real + gradient_penalty
                 d_opt.step()
 
             g_opt.zero_grad()
@@ -165,9 +165,9 @@ def train(args, root):
             # input[:, 1, :, :] = label.reshape(image.shape[0], 1, 1).expand(image.shape[0], image_size, image_size)
             G_out = G(mask)
             pvalidity, plabels = D(torch.cat([mask, G_out], 1))
-            validity_label = real_label.expand(pvalidity.shape)
+            # validity_label = real_label.expand(pvalidity.shape)
             l1_loss = nn.L1Loss()(G_out, image)
-            G_loss_val = validity_loss(pvalidity, validity_label)
+            G_loss_val = -pvalidity.mean()  # validity_loss(pvalidity, validity_label)
 
             G_loss = G_loss_val + l1_loss * args['lambda_l1']
             G_loss.backward()
