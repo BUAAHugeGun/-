@@ -207,7 +207,7 @@ if __name__ == "__main__":
     aa = a.clone()
     a.requires_grad = True
     G = get_G("unet", in_channels=1, out_channels=3, scale=6)
-    # print(G)
+    print(G)
     print(G(a).shape)
     num_params = 0
     for param in G.parameters():
