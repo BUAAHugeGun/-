@@ -105,7 +105,7 @@ def train(args, root):
     writer = SummaryWriter(os.path.join(root, "logs/result/event/"))
 
     dataloader = build_data(args['data_tag'], args['data_path'], args["bs"], True, num_worker=args["num_workers"],
-                            classes=[1], image_size=args['image_size'])
+                            image_size=args['image_size'])
 
     G = get_G("unet", in_channels=1, out_channels=3, scale=6).cuda()
     D = get_D("dnn", classes=2).cuda()  # NLayerDiscriminator(6).cuda()# define_D(3 + 3, 64, 'basic', gpu_id=device) #
@@ -140,7 +140,6 @@ def train(args, root):
                 # validity_label = real_label.expand(pvalidity.shape)
                 D_loss_real_val = -pvalidity.mean()  # validity_loss(pvalidity, validity_label)
                 D_loss_real = D_loss_real_val
-                D_loss_real.backward()
 
                 # D_fake
                 G_out = G(mask)
@@ -148,15 +147,14 @@ def train(args, root):
                 # validity_label = fake_label.expand(pvalidity.shape)
                 D_loss_fake_val = pvalidity.mean()  # validity_loss(pvalidity, validity_label)
                 D_loss_fake = D_loss_fake_val
-                D_loss_fake.backward()
 
                 # wgan-gp
                 gradient_penalty = calc_gradient_penalty(D, image, mask, G_out.detach(), mask.shape[0],
                                                          args['gp_lambda'])
-                gradient_penalty.backward()
 
                 # D-cost
                 D_loss = D_loss_fake + D_loss_real + gradient_penalty
+                D_loss.backward()
                 d_opt.step()
 
             g_opt.zero_grad()

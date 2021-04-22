@@ -3,6 +3,7 @@ from torch.utils.data import DataLoader, Dataset
 from torchvision import datasets as tv_datasets
 from torch.nn import functional as F
 from PIL import Image
+from PIL import ImageFile
 from torchvision import transforms
 import os
 import numpy as np
@@ -11,6 +12,7 @@ import random
 import matplotlib.pyplot as plt
 from pycocotools.coco import COCO
 
+ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 class cifar10_dataset(Dataset):
     def __init__(self, path, train=True, **kwargs):
