@@ -121,26 +121,28 @@ class Discriminator(nn.Module):
         super(Discriminator, self).__init__()
         self.classes = classes
         self.conv = nn.Sequential(
-            # 6,256,256
+            # 6,64,64
             _conv_layer(4, 64, 4, 2, 1, norm=False),
             # _pool_layer(2, 2, 0),
             _conv_layer(64, 128, 4, 2, 1, bias=False),
             # _pool_layer(2, 2, 0),
-            # 128,64,64
+            # 128,16,16
             _conv_layer(128, 256, 4, 2, 1, bias=False),
             # _pool_layer(2, 2, 0),
             _conv_layer(256, 512, 4, 1, 1, bias=False),
-            # 512,32,32
+            # 512,8,8
             _conv_layer(512, 1, 4, 1, 1, norm=False),
             # _conv_layer(128, 1, 3, 1, 1, bias=False),
             # 1,32,32
         )
-        self.validity_layer = nn.Sequential(nn.Linear(100, 1))
+        self.fc = nn.Sequential(nn.Linear(36, 100))
         self.label_layer = nn.Sequential(nn.Linear(100, self.classes), nn.LogSoftmax(dim=1))
 
     def forward(self, x):
         x = self.conv(x)
-        return x, 0
+        plabel = self.fc(x.view(x.shape[0], -1))
+        plabel = self.label_layer(plabel)
+        return x, plabel
 
 
 def get_D(tag, **kwargs):
@@ -161,7 +163,7 @@ def get_D(tag, **kwargs):
 
 
 if __name__ == "__main__":
-    a = torch.randn([8, 6, 256, 256])
-    D = get_D("dnn", classes=2)
+    a = torch.randn([8, 4, 64, 64])
+    D = get_D("dnn", classes=91)
     torch.save(D.state_dict(), "test.pth")
-    print(D.conv)
+    print(D(a)[1].shape)

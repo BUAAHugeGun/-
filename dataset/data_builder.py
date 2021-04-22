@@ -14,6 +14,7 @@ from pycocotools.coco import COCO
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
+
 class cifar10_dataset(Dataset):
     def __init__(self, path, train=True, **kwargs):
         super(cifar10_dataset, self).__init__()
@@ -117,7 +118,7 @@ class coco_obj_dataset(Dataset):
             id, obj_id = filename.split('.')[0].split('_')
             id, obj_id, class_num = int(id), int(obj_id), int(class_num)
             if class_num in classes:
-                self.file_name_label_list.append([filename, obj_id, class_num])
+                self.file_name_label_list.append([filename, obj_id, class_num - 1])  # class number start from 0
 
         self.transform = transforms.Compose(
             [transforms.Resize((self.image_size, self.image_size), Image.BICUBIC),
@@ -138,7 +139,7 @@ class coco_obj_dataset(Dataset):
         if a.shape[0] == 1:
             a = a.expand([3, -1, -1])
         a, b = t1(a), t2(b)
-        return a, b, mask
+        return a, b, mask, torch.tensor(self.file_name_label_list[id][2])
 
 
 def build_data(tag, path, batch_size, training, num_worker, **kwargs):
