@@ -108,7 +108,7 @@ def train(args, root):
                             image_size=args['image_size'])
 
     G = get_G("unet", in_channels=1, out_channels=3, scale=6).cuda()
-    D = get_D("dnn", classes=2).cuda()  # NLayerDiscriminator(6).cuda()# define_D(3 + 3, 64, 'basic', gpu_id=device) #
+    D = get_D("dnn", classes=91).cuda()  # NLayerDiscriminator(6).cuda()# define_D(3 + 3, 64, 'basic', gpu_id=device) #
 
     g_opt = torch.optim.Adam(G.parameters(), lr=args["lr"], betas=(0.5, 0.9))
     d_opt = torch.optim.Adam(D.parameters(), lr=args["lr"], betas=(0.5, 0.9))
@@ -121,17 +121,15 @@ def train(args, root):
 
     # validity_loss = nn.MSELoss().cuda()
 
-    real_label = torch.ones([1]).cuda()
-    fake_label = torch.zeros([1]).cuda()
-
     g_opt.step()
     d_opt.step()
     for epoch in range(load_epoch + 1, args['epoch']):
         g_sch.step()
         d_sch.step()
-        for i, (image, mask, M) in enumerate(dataloader):
+        for i, (image, mask, M, real_labels) in enumerate(dataloader):
             tot_iter += 1
-            image, mask, M = image.cuda(), mask.cuda(), M.cuda()
+            image, mask, M, real_labels = image.cuda(), mask.cuda(), M.cuda(), real_labels.cuda()
+            fake_labels = 90 * torch.ones((image.shape[0]), dtype=torch.long).cuda()
 
             for _ in range(0, args['D_iter']):
                 d_opt.zero_grad()
@@ -139,14 +137,16 @@ def train(args, root):
                 pvalidity, plabels = D(torch.cat([mask, image], 1))
                 # validity_label = real_label.expand(pvalidity.shape)
                 D_loss_real_val = -pvalidity.mean()  # validity_loss(pvalidity, validity_label)
-                D_loss_real = D_loss_real_val
+                D_loss_real_label = nn.NLLLoss()(plabels, real_labels)
+                D_loss_real = D_loss_real_val + D_loss_real_label
 
                 # D_fake
                 G_out = G(mask)
                 pvalidity, plabels = D(torch.cat([mask, G_out.detach()], 1))
                 # validity_label = fake_label.expand(pvalidity.shape)
                 D_loss_fake_val = pvalidity.mean()  # validity_loss(pvalidity, validity_label)
-                D_loss_fake = D_loss_fake_val
+                D_loss_fake_label = nn.NLLLoss()(plabels, fake_labels)
+                D_loss_fake = D_loss_fake_val + D_loss_fake_label
 
                 # wgan-gp
                 gradient_penalty = calc_gradient_penalty(D, image, mask, G_out.detach(), mask.shape[0],
@@ -166,8 +166,9 @@ def train(args, root):
             # validity_label = real_label.expand(pvalidity.shape)
             l1_loss = nn.L1Loss()(G_out, image)
             G_loss_val = -pvalidity.mean()  # validity_loss(pvalidity, validity_label)
+            G_loss_label = nn.NLLLoss()(plabels, real_labels)
 
-            G_loss = G_loss_val + l1_loss * args['lambda_l1']
+            G_loss = G_loss_val + l1_loss * args['lambda_l1'] + G_loss_label
             G_loss.backward()
 
             # DG_r = pvalidity.mean()
@@ -176,18 +177,23 @@ def train(args, root):
             if tot_iter % args['show_interval'] == 0:
                 to_log(
                     'epoch: {}, batch: {}, D_loss: {:.5f}, D_loss_real: {:.5f}, D_loss_fake: {:.5f},' \
-                    'D_loss_real_val: {:.5f}, D_loss_fake_val: {:.5f}, G_loss: {:5f}, G_loss_val: {:.5f},' \
+                    'D_loss_real_val: {:.5f}, D_loss_real_label: {:.5f}, D_loss_fake_val: {:.5f},' \
+                    'D_loss_fake_label: {:.5f} , G_loss: {:5f}, G_loss_val: {:.5f}, G_loss_label: {:.5f},' \
                     'l1: {:5f}, gradient_penalty: {:5f}, lr: {:.5f}'.format(
                         epoch, i, D_loss.item(), D_loss_real.item(), D_loss_fake.item(), D_loss_real_val.item(),
-                        D_loss_fake_val.item(), G_loss.item(), G_loss_val.item(), l1_loss.item(),
-                        gradient_penalty.item(), g_sch.get_last_lr()[0]))
+                        D_loss_real_label.item(), D_loss_fake_val.item(), D_loss_fake_label.item(), G_loss.item(),
+                        G_loss_val.item(), G_loss_label.item(), l1_loss.item(), gradient_penalty.item(),
+                        g_sch.get_last_lr()[0]))
                 writer.add_scalar("loss/D_loss", D_loss.item(), tot_iter)
                 writer.add_scalar("loss/D_loss_real", D_loss_real.item(), tot_iter)
                 writer.add_scalar("loss/D_loss_fake", D_loss_fake.item(), tot_iter)
-                # writer.add_scalar("loss/D_loss_real_val", D_loss_real_val.item(), tot_iter)
-                # writer.add_scalar("loss/D_loss_fake_val", D_loss_fake_val.item(), tot_iter)
+                writer.add_scalar("loss/D_loss_real_val", D_loss_real_val.item(), tot_iter)
+                writer.add_scalar("loss/D_loss_real_label", D_loss_real_label.item(), tot_iter)
+                writer.add_scalar("loss/D_loss_fake_val", D_loss_fake_val.item(), tot_iter)
+                writer.add_scalar("loss/D_loss_fake_label", D_loss_fake_label.item(), tot_iter)
                 writer.add_scalar("loss/G_loss", G_loss.item(), tot_iter)
                 writer.add_scalar("loss/G_loss_val", G_loss_val.item(), tot_iter)
+                writer.add_scalar("loss/G_loss_label", G_loss_label.item(), tot_iter)
                 writer.add_scalar("loss/l1", l1_loss.item(), tot_iter)
                 writer.add_scalar("loss/gradient_penalty", gradient_penalty.item(), tot_iter)
                 writer.add_scalar("lr", g_sch.get_last_lr()[0], tot_iter)
