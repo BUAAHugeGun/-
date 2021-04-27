@@ -104,7 +104,10 @@ class coco_obj_dataset(Dataset):
         f = open(data_list_path)
         classes = kwargs.get('classes', None)
         if classes is None:
-            classes = [x for x in range(1, 91)]
+            assert 0
+        classes_inv = {}
+        for i in range(0, len(classes)):
+            classes_inv[classes[i]] = i
         lines = f.readlines()
 
         # annotation_dir = os.path.join(path, "annotations", "instances_{}2017.json".format("train" if train else 'val'))
@@ -118,7 +121,8 @@ class coco_obj_dataset(Dataset):
             id, obj_id = filename.split('.')[0].split('_')
             id, obj_id, class_num = int(id), int(obj_id), int(class_num)
             if class_num in classes:
-                self.file_name_label_list.append([filename, obj_id, class_num - 1])  # class number start from 0
+                self.file_name_label_list.append(
+                    [filename, obj_id, classes_inv[class_num]])  # class number start from 0
 
         self.transform = transforms.Compose(
             [transforms.Resize((self.image_size, self.image_size), Image.BICUBIC),

@@ -15,6 +15,7 @@ import numpy as np
 import yaml
 import os
 import argparse
+from tools.coco_cut import classes as coco_classes
 from tools.network import define_G, define_D, GANLoss, get_scheduler, update_learning_rate, NLayerDiscriminator
 
 log_file = None
@@ -104,11 +105,16 @@ def train(args, root):
     to_log(args)
     writer = SummaryWriter(os.path.join(root, "logs/result/event/"))
 
+    if args['classes'] == 'NONE':
+        args['classes'] = list(coco_classes.keys())
+    classes_num = len(args['classes'])
+    to_log("classes num: {}".format(classes_num))
+    print(args['classes'])
     dataloader = build_data(args['data_tag'], args['data_path'], args["bs"], True, num_worker=args["num_workers"],
-                            image_size=args['image_size'])
+                            classes=args['classes'], image_size=args['image_size'])
 
     G = get_G("unet", in_channels=1, out_channels=3, scale=6).cuda()
-    D = get_D("dnn", classes=91).cuda()  # NLayerDiscriminator(6).cuda()# define_D(3 + 3, 64, 'basic', gpu_id=device) #
+    D = get_D("dnn", classes=classes_num + 1).cuda()
 
     g_opt = torch.optim.Adam(G.parameters(), lr=args["lr"], betas=(0.5, 0.9))
     d_opt = torch.optim.Adam(D.parameters(), lr=args["lr"], betas=(0.5, 0.9))
@@ -129,7 +135,7 @@ def train(args, root):
         for i, (image, mask, M, real_labels) in enumerate(dataloader):
             tot_iter += 1
             image, mask, M, real_labels = image.cuda(), mask.cuda(), M.cuda(), real_labels.cuda()
-            fake_labels = 90 * torch.ones((image.shape[0]), dtype=torch.long).cuda()
+            fake_labels = classes_num * torch.ones((image.shape[0]), dtype=torch.long).cuda()
 
             for _ in range(0, args['D_iter']):
                 d_opt.zero_grad()
@@ -137,7 +143,7 @@ def train(args, root):
                 pvalidity, plabels = D(torch.cat([mask, image], 1))
                 # validity_label = real_label.expand(pvalidity.shape)
                 D_loss_real_val = -pvalidity.mean()  # validity_loss(pvalidity, validity_label)
-                D_loss_real_label = nn.NLLLoss()(plabels, real_labels)
+                D_loss_real_label = nn.NLLLoss()(plabels, real_labels) if classes_num > 1 else torch.tensor(0)
                 D_loss_real = D_loss_real_val + D_loss_real_label
 
                 # D_fake
@@ -145,7 +151,7 @@ def train(args, root):
                 pvalidity, plabels = D(torch.cat([mask, G_out.detach()], 1))
                 # validity_label = fake_label.expand(pvalidity.shape)
                 D_loss_fake_val = pvalidity.mean()  # validity_loss(pvalidity, validity_label)
-                D_loss_fake_label = nn.NLLLoss()(plabels, fake_labels)
+                D_loss_fake_label = nn.NLLLoss()(plabels, fake_labels) if classes_num > 1 else torch.tensor(0)
                 D_loss_fake = D_loss_fake_val + D_loss_fake_label
 
                 # wgan-gp
@@ -166,7 +172,7 @@ def train(args, root):
             # validity_label = real_label.expand(pvalidity.shape)
             l1_loss = nn.L1Loss()(G_out, image)
             G_loss_val = -pvalidity.mean()  # validity_loss(pvalidity, validity_label)
-            G_loss_label = nn.NLLLoss()(plabels, real_labels)
+            G_loss_label = nn.NLLLoss()(plabels, real_labels) if classes_num > 1 else torch.tensor(0)
 
             G_loss = G_loss_val + l1_loss * args['lambda_l1'] + G_loss_label
             G_loss.backward()
