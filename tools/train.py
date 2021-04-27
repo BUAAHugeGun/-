@@ -114,7 +114,7 @@ def train(args, root):
                             classes=args['classes'], image_size=args['image_size'])
 
     G = get_G("unet", in_channels=1, out_channels=3, scale=6).cuda()
-    D = get_D("dnn", classes=classes_num + 1).cuda()
+    D = get_D("dnn", classes=classes_num).cuda()
 
     g_opt = torch.optim.Adam(G.parameters(), lr=args["lr"], betas=(0.5, 0.9))
     d_opt = torch.optim.Adam(D.parameters(), lr=args["lr"], betas=(0.5, 0.9))
@@ -135,7 +135,6 @@ def train(args, root):
         for i, (image, mask, M, real_labels) in enumerate(dataloader):
             tot_iter += 1
             image, mask, M, real_labels = image.cuda(), mask.cuda(), M.cuda(), real_labels.cuda()
-            fake_labels = classes_num * torch.ones((image.shape[0]), dtype=torch.long).cuda()
 
             for _ in range(0, args['D_iter']):
                 d_opt.zero_grad()
@@ -147,6 +146,8 @@ def train(args, root):
                 D_loss_real = D_loss_real_val + D_loss_real_label
 
                 # D_fake
+                fake_labels = torch.randint(0, classes_num,
+                                            mask.shape[0:1]).cuda() if classes_num > 1 else torch.tensor(0)
                 G_out = G(mask)
                 pvalidity, plabels = D(torch.cat([mask, G_out.detach()], 1))
                 # validity_label = fake_label.expand(pvalidity.shape)
