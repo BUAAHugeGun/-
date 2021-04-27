@@ -13,4 +13,4 @@ gp_lambda: 10
 D_iter: 5
 image_size: 64
 lambda_l1: 10.
-classes: [ 1 ]
+classes: [ 1,19,25,24,22 ]

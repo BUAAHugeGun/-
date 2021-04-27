@@ -112,7 +112,6 @@ def train(args, root):
     print(args['classes'])
     dataloader = build_data(args['data_tag'], args['data_path'], args["bs"], True, num_worker=args["num_workers"],
                             classes=args['classes'], image_size=args['image_size'])
-
     G = get_G("unet", in_channels=1, out_channels=3, scale=6).cuda()
     D = get_D("dnn", classes=classes_num).cuda()
 

@@ -112,6 +112,12 @@ class coco_obj_dataset(Dataset):
 
         # annotation_dir = os.path.join(path, "annotations", "instances_{}2017.json".format("train" if train else 'val'))
         # self.coco = COCO(annotation_dir)
+        count = []
+        Max = 0
+        for x in classes:
+            Max = x if Max < x else Max
+        for i in range(0, Max + 1):
+            count.append(0)
 
         self.file_name_label_list = []
         self.image_size = kwargs.get('image_size', 128)
@@ -120,9 +126,12 @@ class coco_obj_dataset(Dataset):
             filename, class_num, class_name = line.split(' ', 2)
             id, obj_id = filename.split('.')[0].split('_')
             id, obj_id, class_num = int(id), int(obj_id), int(class_num)
-            if class_num in classes:
-                self.file_name_label_list.append(
-                    [filename, obj_id, classes_inv[class_num]])  # class number start from 0
+            if class_num not in classes:
+                continue
+            if len(classes) > 1 and count[class_num] > 10000:
+                continue
+            count[class_num] += 1
+            self.file_name_label_list.append([filename, obj_id, classes_inv[class_num]])  # class number start from 0
 
         self.transform = transforms.Compose(
             [transforms.Resize((self.image_size, self.image_size), Image.BICUBIC),
