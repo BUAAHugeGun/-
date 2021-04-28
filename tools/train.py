@@ -93,6 +93,13 @@ def imagetensor2np(x):
     return x
 
 
+def make_noise(bs, noise_dim):
+    if noise_dim == 0:
+        return None
+    noise = torch.randn([bs, noise_dim]).cuda()
+    return noise
+
+
 def train(args, root):
     global log_file
     if not os.path.exists(os.path.join(root, "logs")):
@@ -108,12 +115,13 @@ def train(args, root):
     if args['classes'] == 'NONE':
         args['classes'] = list(coco_classes.keys())
     classes_num = len(args['classes'])
-    to_log("classes num: {}".format(classes_num))
-    print(args['classes'])
+    noise_dim = args['noise_dim'] if classes_num > 1 else 0
+
     dataloader = build_data(args['data_tag'], args['data_path'], args["bs"], True, num_worker=args["num_workers"],
                             classes=args['classes'], image_size=args['image_size'])
-    G = get_G("unet", in_channels=1, out_channels=3, scale=6).cuda()
-    D = get_D("dnn", classes=classes_num).cuda()
+    G = get_G("unet", in_channels=1, out_channels=3, scale=6, noise_dim=noise_dim,
+              image_size=args['image_size']).cuda()
+    D = get_D("dnn", classes=classes_num + 1).cuda()
 
     g_opt = torch.optim.Adam(G.parameters(), lr=args["lr"], betas=(0.5, 0.9))
     d_opt = torch.optim.Adam(D.parameters(), lr=args["lr"], betas=(0.5, 0.9))
@@ -124,8 +132,6 @@ def train(args, root):
                       args["load_epoch"], root)
     tot_iter = (load_epoch + 1) * len(dataloader)
 
-    # validity_loss = nn.MSELoss().cuda()
-
     g_opt.step()
     d_opt.step()
     for epoch in range(load_epoch + 1, args['epoch']):
@@ -134,24 +140,21 @@ def train(args, root):
         for i, (image, mask, M, real_labels) in enumerate(dataloader):
             tot_iter += 1
             image, mask, M, real_labels = image.cuda(), mask.cuda(), M.cuda(), real_labels.cuda()
-
+            fake_labels = classes_num * torch.ones(mask.shape[0:1], dtype=torch.long).cuda()
             for _ in range(0, args['D_iter']):
                 d_opt.zero_grad()
                 # D_real
                 pvalidity, plabels = D(torch.cat([mask, image], 1))
-                # validity_label = real_label.expand(pvalidity.shape)
-                D_loss_real_val = -pvalidity.mean()  # validity_loss(pvalidity, validity_label)
-                D_loss_real_label = nn.NLLLoss()(plabels, real_labels) if classes_num > 1 else torch.tensor(0)
+                D_loss_real_val = -pvalidity.mean()
+                D_loss_real_label = (nn.NLLLoss().cuda())(plabels, real_labels) if classes_num > 1 else torch.tensor(0)
                 D_loss_real = D_loss_real_val + D_loss_real_label
 
                 # D_fake
-                fake_labels = torch.randint(0, classes_num,
-                                            mask.shape[0:1]).cuda() if classes_num > 1 else torch.tensor(0)
-                G_out = G(mask)
+                noise = make_noise(mask.shape[0], noise_dim)
+                G_out = G(mask, noise, real_labels)
                 pvalidity, plabels = D(torch.cat([mask, G_out.detach()], 1))
-                # validity_label = fake_label.expand(pvalidity.shape)
-                D_loss_fake_val = pvalidity.mean()  # validity_loss(pvalidity, validity_label)
-                D_loss_fake_label = nn.NLLLoss()(plabels, fake_labels) if classes_num > 1 else torch.tensor(0)
+                D_loss_fake_val = pvalidity.mean()
+                D_loss_fake_label = (nn.NLLLoss().cuda())(plabels, fake_labels) if classes_num > 1 else torch.tensor(0)
                 D_loss_fake = D_loss_fake_val + D_loss_fake_label
 
                 # wgan-gp
@@ -165,19 +168,16 @@ def train(args, root):
 
             g_opt.zero_grad()
             # G
-            # input = torch.randn([image.shape[0], 2, image_size, image_size]).cuda()
-            # input[:, 1, :, :] = label.reshape(image.shape[0], 1, 1).expand(image.shape[0], image_size, image_size)
-            G_out = G(mask)
+            noise = make_noise(mask.shape[0], noise_dim)
+            G_out = G(mask, noise, real_labels)
             pvalidity, plabels = D(torch.cat([mask, G_out], 1))
-            # validity_label = real_label.expand(pvalidity.shape)
-            l1_loss = nn.L1Loss()(G_out, image)
-            G_loss_val = -pvalidity.mean()  # validity_loss(pvalidity, validity_label)
-            G_loss_label = nn.NLLLoss()(plabels, real_labels) if classes_num > 1 else torch.tensor(0)
+            l1_loss = (nn.L1Loss().cuda())(G_out, image)
+            G_loss_val = -pvalidity.mean()
+            G_loss_label = (nn.NLLLoss().cuda())(plabels, real_labels) if classes_num > 1 else torch.tensor(0)
 
             G_loss = G_loss_val + l1_loss * args['lambda_l1'] + G_loss_label
             G_loss.backward()
 
-            # DG_r = pvalidity.mean()
             g_opt.step()
 
             if tot_iter % args['show_interval'] == 0:

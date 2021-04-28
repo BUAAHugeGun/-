@@ -133,12 +133,15 @@ class UNET_BLOCK(nn.Module):
 
 
 class UNET(nn.Module):
-    def __init__(self, in_channels, out_channels, scale=5, Max=512):
+    def __init__(self, in_channels, out_channels, scale=5, Max=512, noise_dim=100, image_size=64, classes_num=5):
         super(UNET, self).__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.scale = scale
         self.Max = Max
+        self.noise_dim = noise_dim
+        self.image_size = image_size
+        self.classes_num = classes_num
         self.build()
 
     def initial(self, scale_factor=1.0, mode="FAN_IN"):
@@ -157,6 +160,10 @@ class UNET(nn.Module):
                 m.bias.data.zero_()
 
     def build(self):
+        if self.noise_dim > 0:
+            self.nosie_fc = nn.Linear(self.noise_dim, self.image_size * self.image_size)
+            self.embedding = nn.Embedding(self.classes_num, self.noise_dim)
+            self.in_channels += 1
         self.G = []
         self.D = []
         self.pre_conv = SPADE_CONV(nn.Conv2d, self.in_channels, 32, 3, 1, 1, norm=False)
@@ -175,8 +182,14 @@ class UNET(nn.Module):
         self.g_list = nn.Sequential(*self.G)
         self.d_list = nn.Sequential(*self.D)
 
-    def forward(self, x):
+    def forward(self, x, noise, label):
         seg = x.clone().detach()
+        if noise is not None:
+            label_embedding = self.embedding(label)
+            noise = torch.mul(noise, label_embedding)
+            noise = self.nosie_fc(noise)
+            noise = torch.reshape(noise, [-1, 1, self.image_size, self.image_size])
+            x = torch.cat([x, noise], 1)
         out = []
         out.append(self.pre_conv(x, seg))
         for i in range(self.scale):
@@ -194,21 +207,24 @@ def get_G(tag, **kwargs):
     if tag == "unet":
         in_channels = kwargs.get("in_channels", None)
         out_channels = kwargs.get("out_channels", None)
+        noise_dim = kwargs.get("noise_dim", None)
+        image_size = kwargs.get("image_size", None)
         scale = kwargs.get("scale", 5)
         if in_channels is not None and out_channels is not None:
-            return UNET(in_channels, out_channels, scale)
+            return UNET(in_channels, out_channels, scale, noise_dim=noise_dim, image_size=image_size)
         else:
             print("unet need parameter: in_channels or outchannels")
             assert 0
 
 
 if __name__ == "__main__":
-    a = torch.randn([32, 1, 64, 64])
-    aa = a.clone()
+    a = torch.randn([16, 1, 64, 64])
+    label = torch.randint(0, 5, a.shape[0:1])
+    print(label)
+    noise = torch.randn(16, 100)
     a.requires_grad = True
-    G = get_G("unet", in_channels=1, out_channels=3, scale=6)
-    print(G)
-    print(G(a).shape)
+    G = get_G("unet", in_channels=1, out_channels=3, scale=6, noise_dim=100, image_size=64, classes_num=5)
+    print(G(a, noise, label).shape)
     num_params = 0
     for param in G.parameters():
         num_params += param.numel()
