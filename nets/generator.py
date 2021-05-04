@@ -209,9 +209,11 @@ def get_G(tag, **kwargs):
         out_channels = kwargs.get("out_channels", None)
         noise_dim = kwargs.get("noise_dim", None)
         image_size = kwargs.get("image_size", None)
-        scale = kwargs.get("scale", 5)
+        scale = kwargs.get("scale", None)
+        classes_num = kwargs.get("classes_num", None)
         if in_channels is not None and out_channels is not None:
-            return UNET(in_channels, out_channels, scale, noise_dim=noise_dim, image_size=image_size)
+            return UNET(in_channels, out_channels, scale, noise_dim=noise_dim, image_size=image_size,
+                        classes_num=classes_num)
         else:
             print("unet need parameter: in_channels or outchannels")
             assert 0
