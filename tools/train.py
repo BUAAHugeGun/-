@@ -155,7 +155,7 @@ def train(args, root):
                 pvalidity, plabels = D(torch.cat([mask, G_out.detach()], 1))
                 D_loss_fake_val = pvalidity.mean()
                 D_loss_fake_label = (nn.NLLLoss().cuda())(plabels, fake_labels) if classes_num > 1 else torch.tensor(0)
-                D_loss_fake = D_loss_fake_val + D_loss_fake_label
+                D_loss_fake = D_loss_fake_val# + D_loss_fake_label
 
                 # wgan-gp
                 gradient_penalty = calc_gradient_penalty(D, image, mask, G_out.detach(), mask.shape[0],
