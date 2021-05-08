@@ -145,6 +145,30 @@ class Discriminator(nn.Module):
         return x, plabel
 
 
+class Discriminator_post(nn.Module):
+    def __init__(self):
+        super(Discriminator_post, self).__init__()
+        self.conv = nn.Sequential(
+            # 6,64,64
+            _conv_layer(3, 64, 4, 2, 1, norm=False),
+            # _pool_layer(2, 2, 0),
+            _conv_layer(64, 128, 4, 2, 1, bias=False),
+            # _pool_layer(2, 2, 0),
+            # 128,16,16
+            _conv_layer(128, 256, 4, 2, 1, bias=False),
+            # _pool_layer(2, 2, 0),
+            _conv_layer(256, 512, 4, 1, 1, bias=False),
+            # 512,8,8
+            _conv_layer(512, 1, 4, 1, 1, norm=False),
+            # _conv_layer(128, 1, 3, 1, 1, bias=False),
+            # 1,32,32
+        )
+
+    def forward(self, x):
+        x = self.conv(x)
+        return x
+
+
 def get_D(tag, **kwargs):
     if tag == "mnist":
         return MNIST_D()
@@ -160,6 +184,8 @@ def get_D(tag, **kwargs):
             print("dnn need parameter: classes")
             assert 0
         return Discriminator(classes)
+    elif tag == 'post':
+        return Discriminator_post()
 
 
 if __name__ == "__main__":

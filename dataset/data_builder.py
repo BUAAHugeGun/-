@@ -2,6 +2,7 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 from torchvision import datasets as tv_datasets
 from torch.nn import functional as F
+from torch import nn
 from PIL import Image
 from PIL import ImageFile
 from torchvision import transforms
@@ -11,6 +12,7 @@ import dataset.cifar10 as cifar10
 import random
 import matplotlib.pyplot as plt
 from pycocotools.coco import COCO
+import math
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
@@ -89,7 +91,6 @@ class facades_dataset(Dataset):
 
 
 class coco_obj_dataset(Dataset):
-
     def __init__(self, path, train=True, **kwargs):
         super(coco_obj_dataset, self).__init__()
         if train:
@@ -155,6 +156,147 @@ class coco_obj_dataset(Dataset):
         return a, b, mask, torch.tensor(self.file_name_label_list[id][2])
 
 
+class coco_synthesis_dataset(Dataset):
+    def __init__(self, path, train, **kwargs):
+        super(coco_synthesis_dataset, self).__init__()
+        self.bg_image_dir = path
+        self.base_image_dir = path[0:-2]
+        annotation_dir = os.path.join(path, "..", "annotations",
+                                      "instances_{}2017.json".format("train" if train else 'val'))
+        self.origin_image_dir = os.path.join(path, "..", "{}_image".format("train" if train else "val"))
+        self.origin_label_dir = os.path.join(path, "..", "{}_label".format("train" if train else "val"))
+        # self.obj_mask_dir = os.path.join(path, "..", "{}_mask_cut".format("train" if train else "val"))
+        # self.obj_label_dir = os.path.join(path, "..", "{}_label_cut".format("train" if train else "val"))
+        self.classes = kwargs.get('classes', None)
+        if self.classes is None:
+            assert 0
+        self.obj_model = kwargs.get('obj_model', None)
+        if self.obj_model is None:
+            assert 0
+        self.classes_inv = {}
+        for i in range(0, len(self.classes)):
+            self.classes_inv[self.classes[i]] = i
+
+        file_name_list_file = open(os.path.join(path, "file_name.txt"), "r")
+        lines = file_name_list_file.readlines()
+        self.image_id_to_file_name = []
+        for line in lines:
+            self.image_id_to_file_name.append(line.split('.')[0])
+
+        file_name_list_file = open(os.path.join(self.base_image_dir, "file_name.txt"), "r")
+        lines = file_name_list_file.readlines()
+        self.file_name_to_base_image_name = {}
+        for i in range(len(lines)):
+            line = lines[i]
+            self.file_name_to_base_image_name[line.split('.')[0]] = "img" + str(i).zfill(6) + ".png"
+
+        self.image_size = kwargs.get('image_size', 64)
+        self.transform = transforms.Compose(
+            [transforms.Resize((self.image_size, self.image_size), Image.BICUBIC),
+             transforms.ToTensor(),
+             # transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+             ])
+        self.coco = COCO(annotation_dir)
+
+    def __len__(self):
+        return len(self.image_id_to_file_name)
+
+    def __getitem__(self, id):
+        upsample = nn.UpsamplingBilinear2d((self.image_size, self.image_size))
+        t1 = transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+        t2 = transforms.Normalize((0.5), (0.5))
+
+        bg_image_file_name = "img" + str(id).zfill(6) + ".png"
+        origin_image_id = self.image_id_to_file_name[id]
+        origin_image_file_name = origin_image_id + ".jpg"
+
+        bg_image = transforms.ToTensor()(Image.open(os.path.join(self.bg_image_dir, bg_image_file_name))).cuda()
+        # if origin_image_id in self.file_name_to_base_image_name.keys():
+        #     base_image_file_name = self.file_name_to_base_image_name[origin_image_id]
+        #     base_image = transforms.ToTensor()(Image.open(os.path.join(self.base_image_dir, base_image_file_name)))
+        # else:
+        #     base_image = None
+        origin_image = transforms.ToTensor()(
+            Image.open(os.path.join(self.origin_image_dir, origin_image_file_name))).cuda()
+        if origin_image.shape[0] == 1:
+            origin_image = origin_image.expand([3, -1, -1])
+        origin_label = Image.open(os.path.join(self.origin_label_dir, origin_image_id + ".png"))
+
+        bg_image = (nn.UpsamplingBilinear2d(size=origin_image.shape[1:])(bg_image.unsqueeze(0))).squeeze(0).cuda()
+        # if base_image is not None:
+        #     base_image = (nn.UpsamplingBilinear2d(size=origin_image.shape[1:])(base_image.unsqueeze(0))).squeeze(0)
+
+        # print(origin_image_id)
+        annIds = self.coco.getAnnIds(imgIds=int(origin_image_id), catIds=[], iscrowd=None)
+        anns = self.coco.loadAnns(annIds)
+
+        objs = []
+        for ann in anns:
+            if ann['category_id'] in self.classes:
+                bbox = ann['bbox']
+                for i in range(4):
+                    bbox[i] = math.floor(bbox[i])
+                bbox[2] += bbox[0]
+                bbox[3] += bbox[1]
+
+                mask = self.coco.annToMask(ann) * 255
+                mask = Image.fromarray(mask)
+                obj_mask = mask.crop(bbox)
+                obj_mask = transforms.ToTensor()(obj_mask)
+
+                obj_label = origin_label.crop(bbox)
+
+                W, H = origin_label.size
+                w, h = obj_label.size
+                # if w < 64 or h < 64:
+                #     continue
+                # if bbox[0] < 5 or bbox[1] < 5 or bbox[2] >= W - 5 or bbox[3] >= H - 5:
+                #     continue
+
+                obj_label = self.transform(obj_label).cuda()
+
+                obj_input_catid = torch.tensor(self.classes_inv[ann['category_id']]).unsqueeze(0)
+
+                obj_label = t2(obj_label)
+                objs.append([obj_label, obj_mask, obj_input_catid, bbox, [h, w]])
+
+                # print(origin_image.shape)
+                # print(bbox, w, h)
+                # transforms.ToPILImage()(origin_image[:, bbox[1]:bbox[3], bbox[0]:bbox[2]]).show()
+                # transforms.ToPILImage()(transforms.ToTensor()(origin_label)[:, bbox[1]:bbox[3], bbox[0]:bbox[2]]).show()
+                # transforms.ToPILImage()(obj_label).show()
+                # transforms.ToPILImage()(obj_mask).show()
+                # transforms.ToPILImage()(bg_image[:, bbox[1]:bbox[3], bbox[0]:bbox[2]]).show()
+                # transforms.ToPILImage()(bg_image).show()
+                # if base_image is not None:
+                #     transforms.ToPILImage()(base_image).show()
+                #     transforms.ToPILImage()(origin_image).show()
+                #     exit(0)
+
+        if len(objs) == 0:
+            return t1(upsample(bg_image.unsqueeze(0)).squeeze(0)), \
+                   t1(upsample(origin_image.unsqueeze(0)).squeeze(0)), torch.tensor(origin_image.shape)
+        objs_label = torch.cat([objs[i][0].cuda().unsqueeze(0) for i in range(0, len(objs))], 0)
+        objs_mask = [objs[i][1].cuda() for i in range(0, len(objs))]
+        objs_catid = torch.cat([objs[i][2].cuda() for i in range(0, len(objs))], 0)
+        objs_g = (self.obj_model.generate(objs_label, objs_catid) / 2 + 0.5).clamp(0, 1)
+        # for i in range(objs_g.shape[0]):
+        #    transforms.ToPILImage()(objs_g[i].squeeze(0)).show()
+        synthesis_image = bg_image.clone().cuda()
+        for i in range(objs_g.shape[0]):
+            obj_g = F.interpolate(objs_g[i:i + 1], objs[i][4], mode='bilinear', align_corners=True)
+            bbox = objs[i][3]
+            obj_mask = objs_mask[i]
+            # print(synthesis_image[:, bbox[1]:bbox[3], bbox[0]:bbox[2]].shape, obj_g.shape)
+            synthesis_image[:, bbox[1]:bbox[3], bbox[0]:bbox[2]] = synthesis_image[:, bbox[1]:bbox[3],
+                                                                   bbox[0]:bbox[2]] * (1 - obj_mask) + obj_g * obj_mask
+        # transforms.ToPILImage()(synthesis_image.squeeze(0)).show()
+        shape = origin_image.shape
+        synthesis_image = t1(upsample(synthesis_image.unsqueeze(0)).squeeze(0))
+        origin_image = t1(upsample(origin_image.unsqueeze(0)).squeeze(0))
+        return synthesis_image, origin_image, torch.tensor(shape)
+
+
 def build_data(tag, path, batch_size, training, num_worker, **kwargs):
     if tag == "mnist":
         transform = transforms.Compose([
@@ -172,14 +314,26 @@ def build_data(tag, path, batch_size, training, num_worker, **kwargs):
     elif tag == "coco_obj":
         return DataLoader(coco_obj_dataset(os.path.join(path, 'COCO'), **kwargs), batch_size, shuffle=True,
                           num_workers=num_worker)
+    elif tag == 'coco_synthesis':
+        return DataLoader(coco_synthesis_dataset(path, train=training, **kwargs), batch_size, shuffle=False,
+                          num_workers=num_worker)
 
 
 if __name__ == "__main__":
     # data = build_data("cifar10", os.path.join(os.path.dirname(os.path.abspath(__file__)), "../data"), 8, True, 0)
     # data = build_data("facades", os.path.join(os.path.dirname(os.path.abspath(__file__)), "../data"), 8, True, 0)
-    data = build_data('coco_obj', os.path.join(os.path.dirname(os.path.abspath(__file__)), "../data"), 16, True, 0,
-                      classes=[1])
+    # data = build_data('coco_obj', os.path.join(os.path.dirname(os.path.abspath(__file__)), "../data"), 16, True, 0,
+    #                 classes=[1])
+    from tools.single_obj import SingleObj, open_config
+
+    single_model = SingleObj(open_config('../experiments/pix2pix_5class_new_nfl'),
+                             '../experiments/pix2pix_5class_new_nfl')
+    data = build_data('coco_synthesis',
+                      os.path.join(os.path.dirname(os.path.abspath(__file__)), "../data/COCO/results_coco_train_5"), 8,
+                      True, 0, classes=[1, 19, 22, 24, 25], obj_model=single_model)
     print(len(data))
     for i, data in enumerate(data):
-        print(i, data[0].shape, data[1].shape)
-        exit(0)
+        x = data[0][0].squeeze(0) / 2 + 0.5
+        transforms.ToPILImage()(x).show()
+        print(x.min(), x.max())
+        print(data[0].shape, data[1].shape)

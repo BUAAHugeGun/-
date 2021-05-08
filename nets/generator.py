@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 import math
-from nets.spade import SPADE, SPADE_CONV, SPADE_POOL
+from nets.spade import SPADE, SPADE_CONV, SPADE_POOL, _CONV
 
 
 class MNIST_G(nn.Module):
@@ -201,6 +201,84 @@ class UNET(nn.Module):
         return self.post_conv(out[0], seg)
 
 
+class _BLOCK(nn.Module):
+    def __init__(self, in_channels, out_channels, pool=True, up=False, norm1=True, norm2=True, half=True):
+        super(_BLOCK, self).__init__()
+        half = up and half
+        if pool:
+            self.pool = nn.AvgPool2d(2, 2, 0)
+        else:
+            self.pool = None
+        # layers.append(_conv_layer(in_channels, out_channels, 3, 1, 1, norm=norm1))
+        if up:
+            if half:
+                self.layer = _CONV(nn.ConvTranspose2d, in_channels, out_channels // 2, 4, 2, 1, norm=norm2)
+            else:
+                self.layer = _CONV(nn.ConvTranspose2d, in_channels, out_channels, 4, 2, 1, norm=norm2)
+        else:
+            self.layer = _CONV(nn.Conv2d, in_channels, out_channels, 3, 1, 1, norm=norm2)
+
+    def forward(self, x):
+        if self.pool is not None:
+            x = self.pool(x)
+        return self.layer(x)
+
+
+class POST(nn.Module):
+    def __init__(self, in_channels, out_channels, scale=5, Max=512, ):
+        super(POST, self).__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.scale = scale
+        self.Max = Max
+        self.build()
+
+    def initial(self, scale_factor=1.0, mode="FAN_IN"):
+        if mode != "FAN_IN" and mode != "FAN_out":
+            assert 0
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
+                if mode == "FAN_IN":
+                    n = m.kernel_size[0] * m.kernel_size[1] * m.in_channels
+                    m.weight.data.normal_(0, math.sqrt(scale_factor / n))
+                else:
+                    n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
+                    m.weight.data.normal_(0, math.sqrt(scale_factor / n))
+            elif isinstance(m, nn.InstanceNorm2d):
+                m.weight.data.fill_(1)
+                m.bias.data.zero_()
+
+    def build(self):
+        self.G = []
+        self.D = []
+        self.pre_conv = _CONV(nn.Conv2d, self.in_channels, 32, 3, 1, 1, norm=False)
+        for i in range(self.scale):
+            in_channels = 32 * (2 ** i)
+            self.G.append(
+                _BLOCK(min(self.Max, in_channels), min(self.Max, in_channels * 2), True, i == (self.scale - 1),
+                       norm1=(i > 0), norm2=i < self.scale, half=False))
+        for i in range(self.scale):
+            in_channels = 32 * (2 ** (self.scale - i))
+            out_channels = in_channels // 2
+            self.D.append(
+                _BLOCK(min(self.Max * 2, in_channels), min(self.Max * 2, out_channels), False,
+                       i < (self.scale - 1)))
+        self.post_conv = _CONV(nn.Conv2d, 32, self.out_channels, 3, 1, 1, act="tanh", norm=False)
+        self.g_list = nn.Sequential(*self.G)
+        self.d_list = nn.Sequential(*self.D)
+
+    def forward(self, x):
+        out = []
+        out.append(self.pre_conv(x))
+        for i in range(self.scale):
+            out.append(self.G[i](out[i]))
+        for i in range(self.scale):
+            j = self.scale - i - 1
+            input = torch.cat([out[j + 1], out[j]], 1)
+            out[j] = self.D[i](input)
+        return self.post_conv(out[0])
+
+
 def get_G(tag, **kwargs):
     if tag == "mnist":
         return MNIST_G()
@@ -217,17 +295,23 @@ def get_G(tag, **kwargs):
         else:
             print("unet need parameter: in_channels or outchannels")
             assert 0
+    if tag == 'post':
+        in_channels = kwargs.get("in_channels", None)
+        out_channels = kwargs.get("out_channels", None)
+        scale = kwargs.get("scale", None)
+        return POST(in_channels, out_channels, scale)
 
 
 if __name__ == "__main__":
-    a = torch.randn([16, 1, 64, 64])
+    a = torch.randn([16, 3, 64, 64])
     label = torch.randint(0, 5, a.shape[0:1])
     print(label)
     noise = torch.randn(16, 100)
     a.requires_grad = True
-    G = get_G("unet", in_channels=1, out_channels=3, scale=6, noise_dim=100, image_size=64, classes_num=5)
-    print(G(a, noise, label).shape)
+    G = get_G("post", in_channels=3, out_channels=3, scale=5)
+    print(G(a).shape)
     num_params = 0
     for param in G.parameters():
         num_params += param.numel()
     print(num_params / 1e6)
+    torch.save(G.state_dict(), "test.pth")

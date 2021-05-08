@@ -64,6 +64,31 @@ class SPADE_CONV(Module):
         return self.act(x)
 
 
+class _CONV(Module):
+    def __init__(self, conv_layer, in_channels, out_channels, kernel, stride, padding, bias=True, norm=True,
+                 act='relu'):
+        super(_CONV, self).__init__()
+        self.conv = conv_layer(in_channels, out_channels, kernel, stride, padding, bias=bias)
+        if norm:
+            self.norm = nn.InstanceNorm2d(out_channels)
+        else:
+            self.norm = None
+        if act == "relu":
+            self.act = nn.LeakyReLU(0.2, inplace=True)
+        elif act == "tanh":
+            self.act = nn.Tanh()
+        elif act == "sigmoid":
+            self.act = nn.Sigmoid()
+        else:
+            assert 0
+
+    def forward(self, x):
+        x = self.conv(x)
+        if self.norm is not None:
+            x = self.norm(x)
+        return self.act(x)
+
+
 class SPADE_POOL(Module):
     def __init__(self, pool_layer, kernel, stride, padding):
         super(SPADE_POOL, self).__init__()

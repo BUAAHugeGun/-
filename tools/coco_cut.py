@@ -30,7 +30,7 @@ if __name__ == "__main__":
     data_path = sys.argv[1]
     print("loading data from: {}".format(data_path))
 
-    pre = "train"
+    pre = "val"
 
     warnings.filterwarnings("ignore")
     annotation_dir = os.path.join(data_path, "annotations", "instances_{}2017.json".format(pre))
