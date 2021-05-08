@@ -134,12 +134,17 @@ def train(args, root):
                       args["load_epoch"], root)
     tot_iter = (load_epoch + 1) * len(dataloader)
 
+    max_iter_per_epoch = args['max_iter_per_epoch']
+    if max_iter_per_epoch < 1:
+        max_iter_per_epoch = len(dataloader.dataset)
     g_opt.step()
     d_opt.step()
     for epoch in range(load_epoch + 1, args['epoch']):
         g_sch.step()
         d_sch.step()
         for i, (synthesis, origin, shapes) in enumerate(dataloader):
+            if i >= max_iter_per_epoch:
+                break
             tot_iter += 1
             synthesis, origin, shapes = synthesis.cuda(), origin.cuda(), shapes.cuda()
             for _ in range(0, args['D_iter']):

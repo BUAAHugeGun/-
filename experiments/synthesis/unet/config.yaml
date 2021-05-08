@@ -3,13 +3,15 @@ data_tag: coco_synthesis
 lr: 0.0006
 epoch: 200
 load_epoch: -1
-bs: 32
+bs: 8
 lr_milestone: [ 10,30,80,100 ]
 num_workers: 0
 show_interval: 10
-snapshot_interval: 10
+snapshot_interval: 2
+max_iter_per_epoch: 5000
 test_interval: 2
 gp_lambda: 10
 D_iter: 5
+image_size: 64
 lambda_l1: 10.
 classes: [ 1,19,22,24,25 ]

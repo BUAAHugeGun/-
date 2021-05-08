@@ -238,6 +238,8 @@ class coco_synthesis_dataset(Dataset):
                     bbox[i] = math.floor(bbox[i])
                 bbox[2] += bbox[0]
                 bbox[3] += bbox[1]
+                if bbox[0] < 5 or bbox[1] < 5:
+                    continue
 
                 mask = self.coco.annToMask(ann) * 255
                 mask = Image.fromarray(mask)
@@ -315,7 +317,7 @@ def build_data(tag, path, batch_size, training, num_worker, **kwargs):
         return DataLoader(coco_obj_dataset(os.path.join(path, 'COCO'), **kwargs), batch_size, shuffle=True,
                           num_workers=num_worker)
     elif tag == 'coco_synthesis':
-        return DataLoader(coco_synthesis_dataset(path, train=training, **kwargs), batch_size, shuffle=False,
+        return DataLoader(coco_synthesis_dataset(path, train=training, **kwargs), batch_size, shuffle=True,
                           num_workers=num_worker)
 
 
@@ -329,11 +331,12 @@ if __name__ == "__main__":
     single_model = SingleObj(open_config('../experiments/pix2pix_5class_new_nfl'),
                              '../experiments/pix2pix_5class_new_nfl')
     data = build_data('coco_synthesis',
-                      os.path.join(os.path.dirname(os.path.abspath(__file__)), "../data/COCO/results_coco_train_5"), 8,
+                      os.path.join(os.path.dirname(os.path.abspath(__file__)), "../data/COCO/results_coco_train_5"), 1,
                       True, 0, classes=[1, 19, 22, 24, 25], obj_model=single_model)
     print(len(data))
-    for i, data in enumerate(data):
-        x = data[0][0].squeeze(0) / 2 + 0.5
-        transforms.ToPILImage()(x).show()
-        print(x.min(), x.max())
-        print(data[0].shape, data[1].shape)
+    for i, d in enumerate(data):
+        # x = data[0][0].squeeze(0) / 2 + 0.5
+        # transforms.ToPILImage()(x).show()
+        # print(x.min(), x.max())
+        # print(data[0].shape, data[1].shape)
+        print(i, len(data))
