@@ -236,10 +236,10 @@ class coco_synthesis_dataset(Dataset):
                 bbox = ann['bbox']
                 for i in range(4):
                     bbox[i] = math.floor(bbox[i])
+                if bbox[2] < 5 or bbox[3] < 5:
+                    continue
                 bbox[2] += bbox[0]
                 bbox[3] += bbox[1]
-                if bbox[0] < 5 or bbox[1] < 5:
-                    continue
 
                 mask = self.coco.annToMask(ann) * 255
                 mask = Image.fromarray(mask)
@@ -317,7 +317,7 @@ def build_data(tag, path, batch_size, training, num_worker, **kwargs):
         return DataLoader(coco_obj_dataset(os.path.join(path, 'COCO'), **kwargs), batch_size, shuffle=True,
                           num_workers=num_worker)
     elif tag == 'coco_synthesis':
-        return DataLoader(coco_synthesis_dataset(path, train=training, **kwargs), batch_size, shuffle=True,
+        return DataLoader(coco_synthesis_dataset(path, train=training, **kwargs), batch_size, shuffle=False,
                           num_workers=num_worker)
 
 
