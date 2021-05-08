@@ -13,6 +13,8 @@ import random
 import matplotlib.pyplot as plt
 from pycocotools.coco import COCO
 import math
+from tqdm import tqdm
+from torchvision.utils import save_image
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
@@ -159,14 +161,6 @@ class coco_obj_dataset(Dataset):
 class coco_synthesis_dataset(Dataset):
     def __init__(self, path, train, **kwargs):
         super(coco_synthesis_dataset, self).__init__()
-        self.bg_image_dir = path
-        self.base_image_dir = path[0:-2]
-        annotation_dir = os.path.join(path, "..", "annotations",
-                                      "instances_{}2017.json".format("train" if train else 'val'))
-        self.origin_image_dir = os.path.join(path, "..", "{}_image".format("train" if train else "val"))
-        self.origin_label_dir = os.path.join(path, "..", "{}_label".format("train" if train else "val"))
-        # self.obj_mask_dir = os.path.join(path, "..", "{}_mask_cut".format("train" if train else "val"))
-        # self.obj_label_dir = os.path.join(path, "..", "{}_label_cut".format("train" if train else "val"))
         self.classes = kwargs.get('classes', None)
         if self.classes is None:
             assert 0
@@ -176,6 +170,19 @@ class coco_synthesis_dataset(Dataset):
         self.classes_inv = {}
         for i in range(0, len(self.classes)):
             self.classes_inv[self.classes[i]] = i
+
+        self.bg_image_dir = path
+        self.base_image_dir = path[0:-2]
+        self.annotation_dir = os.path.join(path, "..", "annotations",
+                                           "instances_{}2017.json".format("train" if train else 'val'))
+        self.origin_image_dir = os.path.join(path, "..", "{}_image".format("train" if train else "val"))
+        self.origin_label_dir = os.path.join(path, "..", "{}_label".format("train" if train else "val"))
+        # self.obj_mask_dir = os.path.join(path, "..", "{}_mask_cut".format("train" if train else "val"))
+        # self.obj_label_dir = os.path.join(path, "..", "{}_label_cut".format("train" if train else "val"))
+
+        data_path = os.path.join(self.origin_image_dir, "..")
+        class_num = len(self.classes)
+        self.data_path = os.path.join(data_path, "synthesis_{}_{}".format("train" if train else "val", class_num))
 
         file_name_list_file = open(os.path.join(path, "file_name.txt"), "r")
         lines = file_name_list_file.readlines()
@@ -196,12 +203,54 @@ class coco_synthesis_dataset(Dataset):
              transforms.ToTensor(),
              # transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
              ])
-        self.coco = COCO(annotation_dir)
+        self.data = []
+        if not self.check_data():
+            self.coco = COCO(self.annotation_dir)
+            self.data = []
+            print("preparing synthesis data")
+            for i in tqdm(range(len(self))):
+                origin_image_id = self.image_id_to_file_name[i]
+                image_file_name = origin_image_id + ".png"
+                image_file_path = os.path.join(self.data_path, image_file_name)
+                if os.path.exists(image_file_path):
+                    continue
+                idata = self.prepare(i)
+                image = (idata[0] / 2 + 0.5).clamp(0, 1)
+                if not os.path.exists(self.data_path):
+                    os.mkdir(self.data_path)
+                save_image(image, image_file_path)
 
     def __len__(self):
         return len(self.image_id_to_file_name)
 
     def __getitem__(self, id):
+        t1 = transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+        origin_image_id = self.image_id_to_file_name[id]
+        image_file_name = origin_image_id + ".png"
+        origin_image_file_name = origin_image_id + ".jpg"
+        image_file_path = os.path.join(self.data_path, image_file_name)
+        origin_image_file_path = os.path.join(self.origin_image_dir, origin_image_file_name)
+
+        image = t1(self.transform(Image.open(image_file_path)))
+        ori = Image.open(origin_image_file_path)
+        shape = torch.tensor(transforms.ToTensor()(ori).shape)
+        ori = self.transform(ori)
+        if ori.shape[0] == 1:
+            ori = ori.expand([3, -1, -1])
+        ori = t1(ori)
+        return image, ori, shape
+
+    def check_data(self):
+        print("checking synthesis data")
+        for id in tqdm(range(len(self))):
+            origin_image_id = self.image_id_to_file_name[id]
+            image_file_name = origin_image_id + ".png"
+            image_file_path = os.path.join(self.data_path, image_file_name)
+            if not os.path.exists(image_file_path):
+                return False
+        return True
+
+    def prepare(self, id):
         upsample = nn.UpsamplingBilinear2d((self.image_size, self.image_size))
         t1 = transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
         t2 = transforms.Normalize((0.5), (0.5))
@@ -286,7 +335,7 @@ class coco_synthesis_dataset(Dataset):
         #    transforms.ToPILImage()(objs_g[i].squeeze(0)).show()
         synthesis_image = bg_image.clone().cuda()
         for i in range(objs_g.shape[0]):
-            obj_g = F.interpolate(objs_g[i:i + 1], objs[i][4], mode='bilinear', align_corners=True)
+            obj_g = nn.UpsamplingBilinear2d(objs[i][4])(objs_g[i:i + 1])
             bbox = objs[i][3]
             obj_mask = objs_mask[i]
             # print(synthesis_image[:, bbox[1]:bbox[3], bbox[0]:bbox[2]].shape, obj_g.shape)
@@ -317,7 +366,7 @@ def build_data(tag, path, batch_size, training, num_worker, **kwargs):
         return DataLoader(coco_obj_dataset(os.path.join(path, 'COCO'), **kwargs), batch_size, shuffle=True,
                           num_workers=num_worker)
     elif tag == 'coco_synthesis':
-        return DataLoader(coco_synthesis_dataset(path, train=training, **kwargs), batch_size, shuffle=False,
+        return DataLoader(coco_synthesis_dataset(path, train=training, **kwargs), batch_size, shuffle=True,
                           num_workers=num_worker)
 
 
@@ -331,12 +380,14 @@ if __name__ == "__main__":
     single_model = SingleObj(open_config('../experiments/pix2pix_5class_new_nfl'),
                              '../experiments/pix2pix_5class_new_nfl')
     data = build_data('coco_synthesis',
-                      os.path.join(os.path.dirname(os.path.abspath(__file__)), "../data/COCO/results_coco_train_5"), 1,
-                      True, 0, classes=[1, 19, 22, 24, 25], obj_model=single_model)
+                      os.path.join(os.path.dirname(os.path.abspath(__file__)), "../data/COCO/results_coco_val_5"), 16,
+                      False, 0, classes=[1, 19, 22, 24, 25], obj_model=single_model)
     print(len(data))
+
     for i, d in enumerate(data):
         # x = data[0][0].squeeze(0) / 2 + 0.5
         # transforms.ToPILImage()(x).show()
         # print(x.min(), x.max())
-        # print(data[0].shape, data[1].shape)
         print(i, len(data))
+        print(d[0].shape, d[1].shape, d[2].shape)
+        # save_image(d[0], "../data/COCO/synthesis_train/{}.png".format(d[2]))
