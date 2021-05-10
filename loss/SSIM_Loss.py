@@ -5,8 +5,8 @@ import numpy as np
 
 
 def gaussian(window_size, sigma):
-    gauss = torch.Tensor([exp(-(x - window_size//2)**2/float(2*sigma**2)) for x in range(window_size)])
-    return gauss/gauss.sum()
+    gauss = torch.Tensor([exp(-(x - window_size // 2) ** 2 / float(2 * sigma ** 2)) for x in range(window_size)])
+    return gauss / gauss.sum()
 
 
 def create_window(window_size, channel=1):
@@ -68,7 +68,7 @@ def ssim(img1, img2, window_size=11, window=None, size_average=True, full=False,
     return ret
 
 
-def msssim(img1, img2, window_size=11, size_average=True, val_range=None, normalize=False):
+def msssim(img1, img2, window_size=11, size_average=True, val_range=None, normalize=True):
     device = img1.device
     weights = torch.FloatTensor([0.0448, 0.2856, 0.3001, 0.2363, 0.1333]).to(device)
     levels = weights.size()[0]
@@ -120,6 +120,7 @@ class SSIM(torch.nn.Module):
             self.channel = channel
 
         return ssim(img1, img2, window=window, window_size=self.window_size, size_average=self.size_average)
+
 
 class MSSSIM(torch.nn.Module):
     def __init__(self, window_size=11, size_average=True, channel=3):

@@ -390,4 +390,5 @@ if __name__ == "__main__":
         # print(x.min(), x.max())
         print(i, len(data))
         print(d[0].shape, d[1].shape, d[2].shape)
+        exit(0)
         # save_image(d[0], "../data/COCO/synthesis_train/{}.png".format(d[2]))

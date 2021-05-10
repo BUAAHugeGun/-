@@ -1,14 +1,14 @@
 data_path: ../data
 data_tag: coco_synthesis
-lr: 0.0006
-epoch: 200
+lr: 0.0002
+epoch: 201
 load_epoch: -1
-bs: 8
-lr_milestone: [ 10,30,80,100 ]
-num_workers: 0
+bs: 32
+lr_milestone: [ 100 ]
+num_workers: 8
 show_interval: 10
-snapshot_interval: 2
-max_iter_per_epoch: 5000
+snapshot_interval: 5
+max_iter_per_epoch: -1
 test_interval: 2
 gp_lambda: 10
 D_iter: 5
