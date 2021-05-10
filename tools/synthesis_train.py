@@ -220,7 +220,7 @@ def train(args, root):
             G_out = G_out.clamp(0, 1)
             save_image(G_out, os.path.join(root, "logs/output-{}.png".format(epoch)))
             writer.add_image('image{}/mask'.format(epoch), origin, tot_iter, dataformats='HWC')
-            writer.add_image('image{}/fake'.format(epoch), cv2.cvtColor(image, cv2.COLOR_BGR2RGB), tot_iter,
+            writer.add_image('image{}/fake'.format(epoch), image, tot_iter,
                              dataformats='HWC')
 
 
