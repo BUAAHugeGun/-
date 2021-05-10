@@ -178,11 +178,14 @@ def train(args, root):
             image = imagetensor2np(image)
             origin = batch_image_merge(origin)
             origin = imagetensor2np(origin)
+            synthesis = batch_image_merge(synthesis)
+            synthesis = imagetensor2np(synthesis)
             G_out = G_out / 2 + 0.5
             G_out = G_out.clamp(0, 1)
             save_image(G_out, os.path.join(root, "logs/output-{}.png".format(epoch)))
             writer.add_image('image{}/mask'.format(epoch), origin, tot_iter, dataformats='HWC')
             writer.add_image('image{}/fake'.format(epoch), image, tot_iter, dataformats='HWC')
+            writer.add_image('image{}/input'.format(epoch), synthesis, tot_iter, dataformats='HWC')
 
 
 if __name__ == "__main__":
