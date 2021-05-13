@@ -278,6 +278,7 @@ class POST(nn.Module):
             out[j] = self.D[i](input)
         return self.post_conv(out[0])
 
+
 class mini(nn.Module):
     def __init__(self, in_channels=3):
         super(mini, self).__init__()
@@ -349,7 +350,7 @@ class mini(nn.Module):
             x = self.g0[i](x)
             x = torch.cat([x, x_down[4 - i]], 1)
             x = self.g1[i](x)
-        return self.G(x) + x_ori
+        return (self.G(x) + x_ori) / 2
 
 
 def get_G(tag, **kwargs):
@@ -373,7 +374,7 @@ def get_G(tag, **kwargs):
         out_channels = kwargs.get("out_channels", None)
         scale = kwargs.get("scale", None)
         return POST(in_channels, out_channels, scale)
-    if tag=="mini":
+    if tag == "mini":
         return mini()
 
 

@@ -109,7 +109,7 @@ def test(args, root):
     dataset = coco_synthesis_dataset(data_root, False, classes=args['classes'], image_size=args['image_size'],
                                      obj_model=single_model)
 
-    G = get_G("post", in_channels=3, out_channels=3, scale=6).cuda()
+    G = get_G("mini").cuda()
     G.eval()
 
     psnr = PNSR()
@@ -121,9 +121,8 @@ def test(args, root):
     with torch.no_grad():
         for i in tqdm(range(len(dataset))):
             filename = dataset.image_id_to_file_name[i]
-            synthesis, origin, shapes = dataset[i]
-            synthesis, origin, shapes = synthesis.cuda().unsqueeze(0), origin.cuda().unsqueeze(
-                0), shapes.cuda().unsqueeze(0)
+            synthesis, origin, shape = dataset[i]
+            synthesis, origin = synthesis.cuda().unsqueeze(0), origin.cuda().unsqueeze(0)
 
             # G
             G_out = G(synthesis)
@@ -138,10 +137,9 @@ def test(args, root):
             l1_sum += l1
             psnr_sum += psnr_
             ms_ssim_sum += ms_ssim_
-            # print(l1, psnr_, ms_ssim_)
 
             save_image(G_out, os.path.join(root, "test", filename + ".png"))
-            save_image(origin, os.path.join(root, "test", filename + "_ori.png"))
+            # save_image(origin, os.path.join(root, "test", filename + "_ori.png"))
     length = len(dataset)
     print(l1_sum.item() / length, psnr_sum.item() / length, ms_ssim_sum.item() / length)
 

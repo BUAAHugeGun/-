@@ -2,6 +2,7 @@ from dataset.data_builder import build_data
 from torchvision.utils import save_image
 from tensorboardX import SummaryWriter
 from loss import SSIM_Loss
+from loss.TV_Loss import Loss as TV
 import torch.nn as nn
 from nets.generator import get_G
 from nets.discriminator import get_D
@@ -142,27 +143,31 @@ def train(args, root):
             tot_iter += 1
             synthesis, origin, shapes = synthesis.cuda(), origin.cuda(), shapes.cuda()
 
+            syn_ = synthesis.clone().detach()  # x/x'
+
             g_opt.zero_grad()
             # G
             G_out = G(synthesis)
-            l1_loss = nn.L1Loss()(G_out, origin) * args['lambda_l1']
-            mse_loss = nn.MSELoss()(G_out, origin) * args['lambda_mse']
-            ssim_loss = 1 - SSIM_Loss.msssim(G_out, origin, normalize=True) * args['lambda_ssim']
+            l1_loss = nn.L1Loss()(G_out, syn_) * args['lambda_l1']
+            mse_loss = nn.MSELoss()(G_out, syn_) * args['lambda_mse']
+            tv_loss = TV(args['lambda_tv'])(G_out)
+            ssim_loss = (1 - SSIM_Loss.msssim(G_out, syn_, normalize=True)) * args['lambda_ssim']
 
-            G_loss = l1_loss + mse_loss + ssim_loss
+            G_loss = l1_loss + mse_loss + ssim_loss + tv_loss
             G_loss.backward()
 
             g_opt.step()
 
             if tot_iter % args['show_interval'] == 0:
                 to_log(
-                    'epoch: {}, batch: {}, l1_loss: {:.5f}, mse_loss: {:.5f}, ssim_loss: {:.5f}, G_loss: {:5f}, lr: {:.5f}'.format(
-                        epoch, i, l1_loss.item(), mse_loss.item(), ssim_loss.item(), G_loss.item(),
+                    'epoch: {}, batch: {}, l1_loss: {:.5f}, mse_loss: {:.5f}, ssim_loss: {:.5f}, tv_loss: {:5f}, G_loss: {:5f}, lr: {:.5f}'.format(
+                        epoch, i, l1_loss.item(), mse_loss.item(), ssim_loss.item(), tv_loss.item(), G_loss.item(),
                         g_sch.get_last_lr()[0]))
                 writer.add_scalar("loss/G_loss", G_loss.item(), tot_iter)
                 writer.add_scalar("loss/l1_loss", l1_loss.item(), tot_iter)
                 writer.add_scalar("loss/mse_loss", mse_loss.item(), tot_iter)
                 writer.add_scalar("loss/ssim_loss", ssim_loss.item(), tot_iter)
+                writer.add_scalar("loss/tv_loss", tv_loss.item(), tot_iter)
                 writer.add_scalar("lr", g_sch.get_last_lr()[0], tot_iter)
 
         if epoch % args["snapshot_interval"] == 0:

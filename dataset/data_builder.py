@@ -380,7 +380,7 @@ if __name__ == "__main__":
     single_model = SingleObj(open_config('../experiments/pix2pix_5class_new_nfl'),
                              '../experiments/pix2pix_5class_new_nfl')
     data = build_data('coco_synthesis',
-                      os.path.join(os.path.dirname(os.path.abspath(__file__)), "../data/COCO/results_coco_val_5"), 16,
+                      os.path.join(os.path.dirname(os.path.abspath(__file__)), "../data/COCO/results_coco_val_5"), 1,
                       False, 0, classes=[1, 19, 22, 24, 25], obj_model=single_model)
     print(len(data))
 
