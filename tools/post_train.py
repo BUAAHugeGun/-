@@ -123,7 +123,8 @@ def train(args, root):
     dataloader = build_data(args['data_tag'], data_root, args["bs"], True, num_worker=args["num_workers"],
                             classes=args['classes'], image_size=args['image_size'], obj_model=single_model)
 
-    G = get_G("mini").cuda()
+    # G = get_G("mini").cuda()
+    G = get_G("post", in_channels=3, out_channels=3, scale=5, image_size=args['image_size']).cuda()
 
     g_opt = torch.optim.Adam(G.parameters(), lr=args["lr"], betas=(0.5, 0.9))
     g_sch = torch.optim.lr_scheduler.MultiStepLR(g_opt, args["lr_milestone"], gamma=0.5)
@@ -138,13 +139,9 @@ def train(args, root):
     for epoch in range(load_epoch + 1, args['epoch']):
         g_sch.step()
         for i, (synthesis, origin, shapes) in enumerate(dataloader):
-            if i >= max_iter_per_epoch:
-                break
             tot_iter += 1
             synthesis, origin, shapes = synthesis.cuda(), origin.cuda(), shapes.cuda()
-
             syn_ = synthesis.clone().detach()  # x/x'
-
             g_opt.zero_grad()
             # G
             G_out = G(synthesis)
@@ -169,6 +166,8 @@ def train(args, root):
                 writer.add_scalar("loss/ssim_loss", ssim_loss.item(), tot_iter)
                 writer.add_scalar("loss/tv_loss", tv_loss.item(), tot_iter)
                 writer.add_scalar("lr", g_sch.get_last_lr()[0], tot_iter)
+            if i == max_iter_per_epoch - 1:
+                break
 
         if epoch % args["snapshot_interval"] == 0:
             torch.save(G.state_dict(), os.path.join(root, "logs/G_epoch-{}.pth".format(epoch)))
