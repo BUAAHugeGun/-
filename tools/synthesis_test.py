@@ -109,7 +109,8 @@ def test(args, root):
     dataset = coco_synthesis_dataset(data_root, False, classes=args['classes'], image_size=args['image_size'],
                                      obj_model=single_model)
 
-    G = get_G("mini").cuda()
+    #G = get_G("mini").cuda()
+    G = get_G("post", in_channels=3, out_channels=3, scale=5, image_size=args['image_size']).cuda()
     G.eval()
 
     psnr = PNSR()

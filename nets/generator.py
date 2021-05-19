@@ -379,13 +379,13 @@ def get_G(tag, **kwargs):
 
 
 if __name__ == "__main__":
-    a = torch.randn([16, 3, 64, 64])
+    a = torch.randn([16, 2, 64, 64])
     label = torch.randint(0, 5, a.shape[0:1])
     print(label)
     noise = torch.randn(16, 100)
     a.requires_grad = True
-    G = get_G("post", in_channels=3, out_channels=3, scale=5)
-    print(G(a).shape)
+    G = get_G("unet", in_channels=2, out_channels=3, scale=6, classes_num=5, noise_dim=100, image_size=64)
+    #print(G(a).shape)
     num_params = 0
     for param in G.parameters():
         num_params += param.numel()
