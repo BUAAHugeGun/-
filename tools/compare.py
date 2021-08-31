@@ -64,4 +64,4 @@ if __name__ == "__main__":
         #l[0] += l1(baseline_image, origin_image)
         #l[1] += l1(exp_image, origin_image)
 
-    print(p[0] / data_sum, p[1] / data_sum, '\n', m[0] / data_sum, m[1] / data_sum)#, l[0] / data_sum, l[1] / data_sum)
+    print(p[0] / data_sum, p[1] / data_sum, '\n', m[0]*100 / data_sum, m[1]*100 / data_sum)#, l[0] / data_sum, l[1] / data_sum)

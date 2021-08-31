@@ -121,7 +121,8 @@ def test(args, root):
     ms_ssim_sum = 0
     with torch.no_grad():
         for i in tqdm(range(len(dataset))):
-            filename = dataset.image_id_to_file_name[i]
+            ii=dataset.valid_data[i]
+            filename = dataset.image_id_to_file_name[ii]
             synthesis, origin, shape = dataset[i]
             synthesis, origin = synthesis.cuda().unsqueeze(0), origin.cuda().unsqueeze(0)
 

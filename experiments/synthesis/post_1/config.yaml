@@ -5,10 +5,10 @@ epoch: 201
 load_epoch: -1
 bs: 64
 lr_milestone: [ 10, 50, 100 ]
-num_workers: 0
-show_interval: 10
-snapshot_interval: 5
-max_iter_per_epoch: 100
+num_workers: 8
+show_interval: 50
+snapshot_interval: 50
+max_iter_per_epoch: 200
 test_interval: 2
 gp_lambda: 10
 D_iter: 5
@@ -16,5 +16,5 @@ image_size: 64
 lambda_l1: 1.
 lambda_mse: 0.
 lambda_ssim: 1.
-lambda_tv: 0.1
-classes: [ 1 ]
+lambda_tv: 0.01
+classes: [ 1,29,22,24,25 ]

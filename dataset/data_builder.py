@@ -3,7 +3,7 @@ from torch.utils.data import DataLoader, Dataset
 from torchvision import datasets as tv_datasets
 from torch.nn import functional as F
 from torch import nn
-from PIL import Image
+from PIL import Image, ImageFilter
 from PIL import ImageFile
 from torchvision import transforms
 import os
@@ -205,25 +205,30 @@ class coco_synthesis_dataset(Dataset):
              ])
         self.data = []
         if not self.check_data():
+            self.valid_data=[]
             self.coco = COCO(self.annotation_dir)
             self.data = []
             print("preparing synthesis data")
-            for i in tqdm(range(len(self))):
+            for i in tqdm(range(len(self.image_id_to_file_name))):
                 origin_image_id = self.image_id_to_file_name[i]
                 image_file_name = origin_image_id + ".png"
                 image_file_path = os.path.join(self.data_path, image_file_name)
-                if os.path.exists(image_file_path):
-                    continue
+                #if os.path.exists(image_file_path):
+                #    continue
                 idata = self.prepare(i)
+                if idata is None:
+                    continue
+                self.valid_data.append(i)
                 image = (idata[0] / 2 + 0.5).clamp(0, 1)
                 if not os.path.exists(self.data_path):
                     os.mkdir(self.data_path)
                 save_image(image, image_file_path)
 
     def __len__(self):
-        return len(self.image_id_to_file_name)
+        return len(self.valid_data)
 
     def __getitem__(self, id):
+        id=self.valid_data[id]
         t1 = transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
         origin_image_id = self.image_id_to_file_name[id]
         image_file_name = origin_image_id + ".png"
@@ -242,7 +247,7 @@ class coco_synthesis_dataset(Dataset):
 
     def check_data(self):
         print("checking synthesis data")
-        for id in tqdm(range(len(self))):
+        for id in tqdm(range(len(self.image_id_to_file_name))):
             origin_image_id = self.image_id_to_file_name[id]
             image_file_name = origin_image_id + ".png"
             image_file_path = os.path.join(self.data_path, image_file_name)
@@ -299,10 +304,10 @@ class coco_synthesis_dataset(Dataset):
 
                 W, H = origin_label.size
                 w, h = obj_label.size
-                # if w < 64 or h < 64:
-                #     continue
-                # if bbox[0] < 5 or bbox[1] < 5 or bbox[2] >= W - 5 or bbox[3] >= H - 5:
-                #     continue
+                if w < 63 or h < 63:
+                    continue
+                if bbox[0] < 6 or bbox[1] < 6 or bbox[2] >= W - 6 or bbox[3] >= H - 6:
+                    continue
 
                 obj_label = self.transform(obj_label).cuda()
 
@@ -325,8 +330,8 @@ class coco_synthesis_dataset(Dataset):
                 #     exit(0)
 
         if len(objs) == 0:
-            return t1(upsample(bg_image.unsqueeze(0)).squeeze(0)), \
-                   t1(upsample(origin_image.unsqueeze(0)).squeeze(0)), torch.tensor(origin_image.shape)
+            return None#t1(upsample(bg_image.unsqueeze(0)).squeeze(0)), \
+                   #t1(upsample(origin_image.unsqueeze(0)).squeeze(0)), torch.tensor(origin_image.shape)
         objs_label = torch.cat([objs[i][0].cuda().unsqueeze(0) for i in range(0, len(objs))], 0)
         objs_mask = [objs[i][1].cuda() for i in range(0, len(objs))]
         objs_catid = torch.cat([objs[i][2].cuda() for i in range(0, len(objs))], 0)
@@ -335,7 +340,10 @@ class coco_synthesis_dataset(Dataset):
         #    transforms.ToPILImage()(objs_g[i].squeeze(0)).show()
         synthesis_image = bg_image.clone().cuda()
         for i in range(objs_g.shape[0]):
-            obj_g = nn.UpsamplingBilinear2d(objs[i][4])(objs_g[i:i + 1])
+            # obj_g = transforms.ToPILImage()()
+            # obj_g = obj_g.filter(ImageFilter.GaussianBlur(1))
+            # obj_g = transforms.ToTensor()(objs_g[i])
+            obj_g = nn.UpsamplingBilinear2d(objs[i][4])(objs_g[i].unsqueeze(0)).cuda()
             bbox = objs[i][3]
             obj_mask = objs_mask[i]
             # print(synthesis_image[:, bbox[1]:bbox[3], bbox[0]:bbox[2]].shape, obj_g.shape)
@@ -343,8 +351,10 @@ class coco_synthesis_dataset(Dataset):
                                                                    bbox[0]:bbox[2]] * (1 - obj_mask) + obj_g * obj_mask
         # transforms.ToPILImage()(synthesis_image.squeeze(0)).show()
         shape = origin_image.shape
-        synthesis_image = t1(upsample(synthesis_image.unsqueeze(0)).squeeze(0))
         origin_image = t1(upsample(origin_image.unsqueeze(0)).squeeze(0))
+        # synthesis_image=transforms.ToPILImage()(synthesis_image).filter(ImageFilter.GaussianBlur(1))
+        # synthesis_image=transforms.ToTensor()(synthesis_image)
+        synthesis_image = t1(upsample(synthesis_image.unsqueeze(0)).squeeze(0))
         return synthesis_image, origin_image, torch.tensor(shape)
 
 
@@ -377,11 +387,11 @@ if __name__ == "__main__":
     #                 classes=[1])
     from tools.single_obj import SingleObj, open_config
 
-    single_model = SingleObj(open_config('../experiments/pix2pix_5class_new_nfl'),
-                             '../experiments/pix2pix_5class_new_nfl')
+    single_model = SingleObj(open_config('../experiments/pix2pix_person'),
+                             '../experiments/pix2pix_person')
     data = build_data('coco_synthesis',
-                      os.path.join(os.path.dirname(os.path.abspath(__file__)), "../data/COCO/results_coco_val_5"), 1,
-                      False, 0, classes=[1, 19, 22, 24, 25], obj_model=single_model)
+                      os.path.join(os.path.dirname(os.path.abspath(__file__)), "../data/COCO/results_coco_val_1"), 1,
+                      False, 0, classes=[1], obj_model=single_model)
     print(len(data))
 
     for i, d in enumerate(data):
